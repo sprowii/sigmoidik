@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+# filename: wizard_bot.py
+import os, asyncio, logging, time, io
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from PIL import Image
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder, ContextTypes,
+    CommandHandler, MessageHandler, filters, CallbackContext
+)
+from google import genai
+
+# Gemini API конфиг
+API_KEYS = []
+for i in [1, 2]:
+    key = os.getenv(f"GEMINI_API_KEY_{i}")
+    if key:
+        API_KEYS.append(key)
+
+if not API_KEYS:
+    raise RuntimeError("Необходимо установить хотя бы одну переменную окружения GEMINI_API_KEY_1 или GEMINI_API_KEY_2")
+# Список моделей по убыванию (от лучшей к худшей)
+MODELS = [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-preview",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite-preview",
+    "gemini-2.0-flash"
+]
+MAX_HISTORY = 12                    # сколько пар вопрос-ответ храним
+current_key_idx = 0
+current_model_idx = 0
+# Доступные модели (обновляется каждые 4 часа)
+available_models: List[str] = MODELS.copy()
+last_model_check_ts: float = 0.0
+
+# ---------- Логи ----------
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO
+)
+log = logging.getLogger("wizardbot")
+
+# ---------- Конфиг на чат ----------
+@dataclass
+class ChatConfig:
+    autopost_enabled: bool = False
+    interval: int = 7200          # 2 ч
+    min_messages: int = 10
+    msg_size: str = "medium"      # small/medium/large
+    last_post_ts: float = 0.0
+    new_msg_counter: int = 0
+
+# chat_id -> ChatConfig
+configs: Dict[int, ChatConfig] = {}
+# chat_id -> history (для LLM)
+history: Dict[int, List[Dict[str, str]]] = {}
+
+
+# ---------- Вспомогалки ----------
+def get_cfg(chat_id: int) -> ChatConfig:
+    if chat_id not in configs:
+        configs[chat_id] = ChatConfig()
+    return configs[chat_id]
+
+def llm_request(chat_id: int, prompt: str, image: Optional[Image.Image] = None) -> Tuple[str, str]:
+    """
+    Возвращает (ответ, модель_которая_использовалась)
+    """
+    global current_key_idx, current_model_idx
+    
+    # подготавливаем историю для Gemini
+    hist = history.get(chat_id, [])
+    
+    # Используем только проверенные доступные модели
+    models_to_try = available_models if available_models else MODELS
+    
+    # Пробуем модели по порядку (от лучшей к худшей)
+    for model_idx_offset in range(len(models_to_try)):
+        model_idx = (current_model_idx + model_idx_offset) % len(models_to_try)
+        model_name = models_to_try[model_idx]
+        
+        # Для каждой модели пробуем все ключи
+        model_failed_on_all_keys = True
+        for key_try in range(len(API_KEYS)):
+            key_idx = (current_key_idx + key_try) % len(API_KEYS)
+            api_key = API_KEYS[key_idx]
+            
+            try:
+                # Настраиваем клиента с текущим ключом
+                genai.configure(api_key=api_key)
+                client = genai.Client()
+                
+                # Отправляем запрос
+                if not hist:
+                    # Без истории - простой формат
+                    if image:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[image, prompt]
+                        )
+                    else:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt
+                        )
+                    answer = response.text.strip()
+                else:
+                    # С историей - через contents
+                    contents = []
+                    for item in hist:
+                        contents.append({
+                            "role": item["role"],
+                            "parts": [{"text": item["content"]}]
+                        })
+                    
+                    # Добавляем текущий запрос с текстом и/или изображением
+                    if image:
+                        contents.append({
+                            "role": "user",
+                            "parts": [image, {"text": prompt}]
+                        })
+                    else:
+                        contents.append({
+                            "role": "user",
+                            "parts": [{"text": prompt}]
+                        })
+                    
+                    # Отправляем запрос с историей
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=contents
+                    )
+                    answer = response.text.strip()
+                
+                # обновляем историю
+                hist = history.setdefault(chat_id, [])
+                hist.extend([{"role":"user","content":prompt},
+                             {"role":"assistant","content":answer}])
+                if len(hist) > MAX_HISTORY*2:
+                    history[chat_id] = hist[-MAX_HISTORY*2:]
+                
+                # сохраняем успешную комбинацию
+                current_key_idx = key_idx
+                current_model_idx = model_idx
+                model_failed_on_all_keys = False
+                
+                return (answer, model_name)
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                # проверяем на лимиты
+                if any(phrase in error_msg for phrase in [
+                    "resource exhausted", "quota exceeded", "rate limit", 
+                    "exceeded", "ограничение", "limit"
+                ]):
+                    log.info(f"Rate limit: key {key_idx+1}, model {model_name}, trying next key...")
+                    continue
+                else:
+                    log.warning(f"Request failed: key {key_idx+1}, model {model_name}: {e}")
+                    continue
+        
+        # Если модель не сработала на всех ключах, пробуем следующую модель
+        if model_failed_on_all_keys:
+            log.info(f"Model {model_name} failed on all keys, trying next model...")
+            continue
+    
+    # если все комбинации не сработали
+    raise Exception("All API keys/models failed")
+
+def check_available_models() -> List[str]:
+    """Проверяет доступные модели на всех ключах (быстрая проверка)"""
+    global available_models, last_model_check_ts
+    
+    working_models = []
+    
+    # Проверяем каждую модель на каждом ключе
+    for model_name in MODELS:
+        model_works = False
+        for api_key in API_KEYS:
+            try:
+                genai.configure(api_key=api_key)
+                client = genai.Client()
+                # Быстрый тестовый запрос для проверки доступности
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents="hi"
+                )
+                # Если дошли сюда без ошибки - модель работает
+                model_works = True
+                break
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Если модель не существует - пропускаем
+                if "not found" in error_msg or "invalid model" in error_msg:
+                    break  # Эта модель точно не работает
+                # Для лимитов - пробуем другой ключ
+                continue
+        
+        if model_works:
+            working_models.append(model_name)
+            log.info(f"Model {model_name} is available")
+    
+    if working_models:
+        available_models = working_models
+        last_model_check_ts = time.time()
+        log.info(f"Available models updated: {working_models}")
+    else:
+        log.warning("No models available, using fallback list")
+        available_models = MODELS.copy()
+    
+    return available_models
+
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Проверка, является ли автор админом в группе/супергруппе."""
+    if update.effective_chat.type == "private":
+        return True  # в личке все права
+    member = await context.bot.get_chat_member(
+        update.effective_chat.id, update.effective_user.id
+    )
+    return member.status in ("administrator", "creator")
+
+def answer_size_prompt(size: str) -> str:
+    mapping = {
+        "small":   "Кратко:",
+        "medium":  "Ответь развернуто:",
+        "large":   "Ответь максимально подробно, с примерами кода и пояснениями:"
+    }
+    return mapping.get(size, "")
+
+# ---------- Команды ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Я Gemini 2.5 бот. /help – справка")
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "/settings – показать текущие настройки\n"
+        "/autopost on|off – включить/выключить автопосты\n"
+        "/set_interval <сек> – интервал автопоста\n"
+        "/set_minmsgs <n> – минимум новых сообщений перед автопостом\n"
+        "/set_msgsize <small|medium|large> – размер ответов бота\n"
+        "/reset – очистить историю диалога"
+    )
+
+async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cfg = get_cfg(update.effective_chat.id)
+    txt = (
+        f"Автопосты: {'включены' if cfg.autopost_enabled else 'выключены'}.\n"
+        f"Интервал автопоста: {cfg.interval//3600} ч, "
+        f"минимум новых сообщений: {cfg.min_messages}.\n"
+        f"Размер ответов: {cfg.msg_size}."
+    )
+    await update.message.reply_text(txt)
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    history.pop(update.effective_chat.id, None)
+    await update.message.reply_text("История очищена ✅")
+
+async def autopost_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    args = (context.args or [])[:1]
+    if not args or args[0] not in {"on", "off"}:
+        await update.message.reply_text("Используйте: /autopost on|off")
+        return
+    cfg = get_cfg(update.effective_chat.id)
+    cfg.autopost_enabled = args[0] == "on"
+    await update.message.reply_text(f"Автопосты {'включены' if cfg.autopost_enabled else 'выключены'}")
+
+async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    try:
+        sec = int(context.args[0])
+        cfg = get_cfg(update.effective_chat.id)
+        cfg.interval = max(300, sec)
+        await update.message.reply_text(f"Интервал автопоста = {cfg.interval} сек")
+    except (IndexError, ValueError):
+        await update.message.reply_text("Пример: /set_interval 7200")
+
+async def set_minmsgs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    try:
+        n = int(context.args[0])
+        cfg = get_cfg(update.effective_chat.id)
+        cfg.min_messages = max(1, n)
+        await update.message.reply_text(f"Минимум сообщений = {cfg.min_messages}")
+    except (IndexError, ValueError):
+        await update.message.reply_text("Пример: /set_minmsgs 10")
+
+async def set_msgsize(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    size = (context.args or [""])[0].lower()
+    if size not in {"small", "medium", "large"}:
+        await update.message.reply_text("Варианты: small | medium | large")
+        return
+    cfg = get_cfg(update.effective_chat.id)
+    cfg.msg_size = size
+    await update.message.reply_text(f"Размер ответов = {size}")
+
+# ---------- Основной обработчик текста ----------
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = update.message.text
+
+    # счётчик для автопоста
+    cfg = get_cfg(chat_id)
+    cfg.new_msg_counter += 1
+
+    # LLM prompt
+    sys_prompt = answer_size_prompt(cfg.msg_size)
+    prompt = f"{sys_prompt}\n{text}" if sys_prompt else text
+
+    await context.bot.send_chat_action(chat_id, "typing")
+    loop = asyncio.get_event_loop()
+    try:
+        reply, model_used = await loop.run_in_executor(None, llm_request, chat_id, prompt)
+        # Показываем модель перед ответом
+        model_display = model_used.replace("gemini-", "").replace("-", " ").title()
+        full_reply = f"🤖 {model_display}\n\n{reply}"
+    except Exception as e:
+        log.exception(e)
+        full_reply = "⚠️ Ошибка модели."
+    await update.message.reply_text(full_reply, disable_web_page_preview=True)
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = update.message.caption or "Опиши это изображение"
+    
+    # счётчик для автопоста
+    cfg = get_cfg(chat_id)
+    cfg.new_msg_counter += 1
+    
+    # Получаем фото - берем самое большое
+    photos = update.message.photo
+    photo = photos[-1]
+    
+    await context.bot.send_chat_action(chat_id, "typing")
+    
+    # Скачиваем фото
+    file = await context.bot.get_file(photo.file_id)
+    photo_bytes = await file.download_as_bytearray()
+    
+    # Конвертируем в PIL Image
+    image = Image.open(io.BytesIO(photo_bytes))
+    
+    # LLM prompt
+    sys_prompt = answer_size_prompt(cfg.msg_size)
+    prompt = f"{sys_prompt}\n{text}" if sys_prompt else text
+    
+    loop = asyncio.get_event_loop()
+    try:
+        reply, model_used = await loop.run_in_executor(None, llm_request, chat_id, prompt, image)
+        # Показываем модель перед ответом
+        model_display = model_used.replace("gemini-", "").replace("-", " ").title()
+        full_reply = f"🤖 {model_display}\n\n{reply}"
+    except Exception as e:
+        log.exception(e)
+        full_reply = "⚠️ Ошибка модели."
+    await update.message.reply_text(full_reply, disable_web_page_preview=True)
+
+# ---------- JOB для проверки моделей ----------
+async def check_models_job(context: CallbackContext):
+    """Проверяет доступные модели каждые 4 часа (14400 сек)"""
+    log.info("Checking available models...")
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, check_available_models)
+    except Exception as e:
+        log.exception(f"Error checking models: {e}")
+
+# ---------- JOB для автопостов ----------
+async def autopost_job(context: CallbackContext):
+    for chat_id, cfg in list(configs.items()):
+        if not cfg.autopost_enabled:
+            continue
+        if cfg.new_msg_counter < cfg.min_messages:
+            continue
+        if time.time() - cfg.last_post_ts < cfg.interval:
+            continue
+
+        prompt = (
+            f"Сделай краткий дайджест последних {cfg.new_msg_counter} сообщений "
+            "из группового чата. Выдели основные вопросы и идеи."
+        )
+        log.info(f"Autopost in chat {chat_id}")
+        try:
+            loop = asyncio.get_event_loop()
+            summary, model_used = await loop.run_in_executor(None, llm_request, chat_id, prompt)
+            model_display = model_used.replace("gemini-", "").replace("-", " ").title()
+            await context.bot.send_message(chat_id, f"📰 Автодайджест ({model_display}):\n{summary}")
+            cfg.last_post_ts = time.time()
+            cfg.new_msg_counter = 0
+        except Exception as e:
+            log.exception(e)
+
+# ---------- MAIN ----------
+async def main():
+    token = os.getenv("TG_TOKEN")
+    if not token:
+        raise RuntimeError("TG_TOKEN env not set")
+
+    app = ApplicationBuilder().token(token).build()
+
+    # regular commands
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("settings", settings_cmd))
+    app.add_handler(CommandHandler("reset", reset))
+
+    # admin commands
+    app.add_handler(CommandHandler("autopost", autopost_switch))
+    app.add_handler(CommandHandler("set_interval", set_interval))
+    app.add_handler(CommandHandler("set_minmsgs", set_minmsgs))
+    app.add_handler(CommandHandler("set_msgsize", set_msgsize))
+
+    # messages
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Проверка моделей при старте и каждые 4 часа (14400 сек)
+    log.info("Initial model check...")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, check_available_models)
+    app.job_queue.run_repeating(check_models_job, interval=14400, first=14400)
+
+    # автопост проверяем каждые 60 сек
+    app.job_queue.run_repeating(autopost_job, interval=60, first=60)
+
+    log.info("Bot started 🚀")
+    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    asyncio.run(main())
