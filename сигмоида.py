@@ -9,7 +9,7 @@ from telegram.ext import (
     ApplicationBuilder, ContextTypes,
     CommandHandler, MessageHandler, filters, CallbackContext
 )
-from google import genai
+import google.generativeai as genai
 
 # Gemini API конфиг
 API_KEYS = []
