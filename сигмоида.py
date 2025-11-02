@@ -66,139 +66,77 @@ def get_cfg(chat_id: int) -> ChatConfig:
     return configs[chat_id]
 
 def llm_request(chat_id: int, prompt: str, image: Optional[Image.Image] = None) -> Tuple[str, str]:
-    """
-    Возвращает (ответ, модель_которая_использовалась)
-    """
     global current_key_idx, current_model_idx
-    
-    # подготавливаем историю для Gemini
-    hist = history.get(chat_id, [])
-    
-    # Используем только проверенные доступные модели
+
+    chat_history = history.get(chat_id, [])
     models_to_try = available_models if available_models else MODELS
-    
-    # Пробуем модели по порядку (от лучшей к худшей)
+
     for model_idx_offset in range(len(models_to_try)):
         model_idx = (current_model_idx + model_idx_offset) % len(models_to_try)
         model_name = models_to_try[model_idx]
-        
-        # Для каждой модели пробуем все ключи
+
         model_failed_on_all_keys = True
         for key_try in range(len(API_KEYS)):
             key_idx = (current_key_idx + key_try) % len(API_KEYS)
             api_key = API_KEYS[key_idx]
-            
+
             try:
-                # Настраиваем клиента с текущим ключом
                 genai.configure(api_key=api_key)
-                client = genai.Client()
+                model = genai.GenerativeModel(model_name)
                 
-                # Отправляем запрос
-                if not hist:
-                    # Без истории - простой формат
-                    if image:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=[image, prompt]
-                        )
-                    else:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=prompt
-                        )
-                    answer = response.text.strip()
-                else:
-                    # С историей - через contents
-                    contents = []
-                    for item in hist:
-                        contents.append({
-                            "role": item["role"],
-                            "parts": [{"text": item["content"]}]
-                        })
-                    
-                    # Добавляем текущий запрос с текстом и/или изображением
-                    if image:
-                        contents.append({
-                            "role": "user",
-                            "parts": [image, {"text": prompt}]
-                        })
-                    else:
-                        contents.append({
-                            "role": "user",
-                            "parts": [{"text": prompt}]
-                        })
-                    
-                    # Отправляем запрос с историей
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents
-                    )
-                    answer = response.text.strip()
+                # Модели с картинками плохо работают с историей, так что для них начинаем чат заново
+                current_chat_history = chat_history if not image else []
+                chat_session = model.start_chat(history=current_chat_history)
                 
-                # обновляем историю
-                hist = history.setdefault(chat_id, [])
-                hist.extend([{"role":"user","content":prompt},
-                             {"role":"assistant","content":answer}])
-                if len(hist) > MAX_HISTORY*2:
-                    history[chat_id] = hist[-MAX_HISTORY*2:]
+                content_to_send = [prompt]
+                if image:
+                    content_to_send.insert(0, image)
+
+                response = chat_session.send_message(content_to_send)
+                answer = response.text
                 
-                # сохраняем успешную комбинацию
+                # Не сохраняем историю для запросов с картинками, чтобы избежать проблем
+                if not image:
+                    history[chat_id] = chat_session.history
+
                 current_key_idx = key_idx
                 current_model_idx = model_idx
                 model_failed_on_all_keys = False
-                
                 return (answer, model_name)
-                
             except Exception as e:
                 error_msg = str(e).lower()
-                # проверяем на лимиты
-                if any(phrase in error_msg for phrase in [
-                    "resource exhausted", "quota exceeded", "rate limit", 
-                    "exceeded", "ограничение", "limit"
-                ]):
+                if any(phrase in error_msg for phrase in ["resource exhausted", "quota exceeded", "rate limit", "exceeded", "ограничение", "limit"]):
                     log.info(f"Rate limit: key {key_idx+1}, model {model_name}, trying next key...")
                     continue
                 else:
                     log.warning(f"Request failed: key {key_idx+1}, model {model_name}: {e}")
                     continue
-        
-        # Если модель не сработала на всех ключах, пробуем следующую модель
         if model_failed_on_all_keys:
             log.info(f"Model {model_name} failed on all keys, trying next model...")
             continue
-    
-    # если все комбинации не сработали
     raise Exception("All API keys/models failed")
 
 def check_available_models() -> List[str]:
-    """Проверяет доступные модели на всех ключах (быстрая проверка)"""
     global available_models, last_model_check_ts
-    
+    log.info("Checking available models...")
     working_models = []
-    
-    # Проверяем каждую модель на каждом ключе
     for model_name in MODELS:
         model_works = False
         for api_key in API_KEYS:
             try:
                 genai.configure(api_key=api_key)
-                client = genai.Client()
-                # Быстрый тестовый запрос для проверки доступности
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents="hi"
-                )
-                # Если дошли сюда без ошибки - модель работает
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content("hi")
+                # Убедимся, что ответ валидный
+                _ = response.text
                 model_works = True
                 break
             except Exception as e:
                 error_msg = str(e).lower()
-                # Если модель не существует - пропускаем
-                if "not found" in error_msg or "invalid model" in error_msg:
-                    break  # Эта модель точно не работает
-                # Для лимитов - пробуем другой ключ
+                if "not found" in error_msg or "invalid model" in error_msg or "does not exist" in error_msg:
+                    log.warning(f"Model {model_name} not found or invalid.")
+                    break 
                 continue
-        
         if model_works:
             working_models.append(model_name)
             log.info(f"Model {model_name} is available")
@@ -210,7 +148,6 @@ def check_available_models() -> List[str]:
     else:
         log.warning("No models available, using fallback list")
         available_models = MODELS.copy()
-    
     return available_models
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
