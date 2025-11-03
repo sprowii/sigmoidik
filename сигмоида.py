@@ -11,15 +11,91 @@ from telegram.ext import (
     CommandHandler, MessageHandler, filters, CallbackContext
 )
 import google.generativeai as genai
-from flask import Flask # <-- Добавляем импорт Flask
+from flask import Flask, render_template_string # <-- Добавляем render_template_string
 import threading # <-- Добавляем импорт threading
 
 # Создаем простое Flask-приложение для веб-сервера
 flask_app = Flask(__name__)
 
+# HTML-шаблон для основной страницы
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Бот сигмоида запущен!</title>
+    <style>
+        body {
+            background-color: #1a1a1a; /* Темная тема */
+            color: #f0f0f0; /* Светлый текст */
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        .container {
+            background-color: #2c2c2c;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+        h1 {
+            color: #90ee90; /* Светло-зеленый заголовок */
+            margin-bottom: 20px;
+        }
+        p {
+            font-size: 1.1em;
+            margin-bottom: 30px;
+        }
+        .tenor-gif-embed {
+            margin: 20px auto; /* Центрируем гифку */
+            max-width: 100%;
+            height: auto;
+        }
+        .button-link {
+            display: inline-block;
+            background-color: #6a5acd; /* Фиолетовая кнопка */
+            color: white;
+            padding: 12px 25px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 1.1em;
+            transition: background-color 0.3s ease;
+        }
+        .button-link:hover {
+            background-color: #7b68ee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🥳 Бот сигмоида успешно запущен!</h1>
+        <p>Ваш Telegram бот работает и готов отвечать на запросы.</p>
+        <div class="tenor-gif-embed" data-postid="13327394754582742145" data-share-method="host" data-aspect-ratio="1" data-width="100%">
+            <a href="https://tenor.com/view/cologne-wear-i-buddy-home-gif-13327394754582742145">Cologne Wear GIF</a>
+            from <a href="https://tenor.com/search/cologne-gifs">Cologne GIFs</a>
+        </div>
+        <script type="text/javascript" async src="https://tenor.com/embed.js"></script>
+        <br>
+        <a href="https://sprouee.ru" target="_blank" class="button-link">Сайт создателей</a>
+    </div>
+</body>
+</html>
+"""
+
+
 @flask_app.route('/')
 def home():
-    return "Bot is running!", 200
+    return render_template_string(HTML_TEMPLATE)
 
 # Gemini API конфиг
 API_KEYS = []
