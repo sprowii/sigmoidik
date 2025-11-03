@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from PIL import Image
 from telegram import Update
+from telegram.constants import ChatType, MessageEntityType # <-- Добавляем импорт MessageEntityType
 from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder, ContextTypes,
@@ -399,15 +400,49 @@ async def send_bot_response(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+    
     chat_id = update.effective_chat.id
     text = update.message.text
-
+    
+    # Проверка на упоминание бота в группах
+    if update.message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        # Проверяем, есть ли упоминания в сообщении
+        if not update.message.entities:
+            return  # Нет entities, значит нет упоминаний
+        
+        bot_mentioned = False
+        for entity in update.message.entities:
+            if entity.type == MessageEntityType.MENTION:
+                # Проверяем, что упоминание указывает на нашего бота
+                mention_text = text[entity.offset:entity.offset + entity.length]
+                # Убираем @ для сравнения
+                mention_username = mention_text.lstrip('@')
+                # Получаем username бота из контекста (сохраняем его глобально или передаём через context)
+                # Или используем bot.username напрямую
+                if mention_username.lower() == context.bot.username.lower():
+                    bot_mentioned = True
+                    break
+        
+        if not bot_mentioned:
+            return  # Бот не упомянут, игнорируем
+    
     # счётчик для автопоста
     cfg = get_cfg(chat_id)
     cfg.new_msg_counter += 1
 
     # LLM prompt
     sys_prompt = answer_size_prompt(cfg.msg_size)
+    # Убираем упоминание бота из текста, чтобы оно не попало в промпт
+    if update.message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        # Удаляем упоминание бота из текста
+        for entity in reversed(update.message.entities or []):
+            if entity.type == MessageEntityType.MENTION:
+                mention_text = text[entity.offset:entity.offset + entity.length]
+                mention_username = mention_text.lstrip('@')
+                if mention_username.lower() == context.bot.username.lower():
+                    # Удаляем упоминание и лишние пробелы
+                    text = (text[:entity.offset] + text[entity.offset + entity.length:]).strip()
+    
     prompt = f"{sys_prompt}\n{text}" if sys_prompt else text
 
     await send_bot_response(update, context, chat_id, prompt)
@@ -526,9 +561,9 @@ def main(): # <--- Снова делаем main синхронной
     app.add_handler(CommandHandler("delete_data", delete_data)) # <-- Добавляем новую команду
     app.add_handler(CommandHandler(f"delete_data_{bot_username}", delete_data)) # Для совместимости с упоминаниями
 
-    # Обработка текстовых сообщений (только по упоминанию бота в группах, обычный текст в личных)
-    # Используем заранее полученный bot_id
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & filters.Mention(bot_id) & ~filters.COMMAND, handle_msg))
+    # Обработка текстовых сообщений (теперь проверяем упоминания внутри handle_msg)
+    # В группах будем проверять упоминания внутри функции, а в личных - отвечать на любой текст
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
