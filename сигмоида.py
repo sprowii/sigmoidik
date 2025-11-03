@@ -505,28 +505,29 @@ async def autopost_job(context: CallbackContext):
             log.error(f"Autopost failed for chat {chat_id}: {e}")
 
 # ---------- MAIN ----------
-def main():
+async def main(): # Вернули main в асинхронный режим
     token = os.getenv("TG_TOKEN")
     if not token:
         raise RuntimeError("TG_TOKEN env not set")
 
     app = ApplicationBuilder().token(token).build()
 
-    # regular commands
+    await app.initialize() # <--- Явная инициализация бота, чтобы app.bot.id был доступен
+
+    # Теперь app.bot.id будет доступен
+    bot_id = app.bot.id
+
+    # Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("privacy", privacy_cmd)) # <-- Добавлен новый хендлер
-
-    # admin commands
     app.add_handler(CommandHandler("autopost", autopost_switch))
     app.add_handler(CommandHandler("set_interval", set_interval))
-    app.add_handler(CommandHandler("set_minmsgs", set_minmsgs))
     app.add_handler(CommandHandler("set_msgsize", set_msgsize))
+    app.add_handler(CommandHandler("privacy", privacy_cmd))
 
-    # Обработка текстовых сообщений
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & filters.Mention(app.bot.id) & ~filters.COMMAND, handle_msg))
+    # Обработка текстовых сообщений (теперь только по упоминанию бота в группах)
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & filters.Mention(bot_id) & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
@@ -550,8 +551,9 @@ def main():
     log.info(f"Flask app started on port {port}")
     # ---------------------------------------------------
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
+    # Используем await для run_polling
+    await app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main()) # <--- Запускаем асинхронную main
