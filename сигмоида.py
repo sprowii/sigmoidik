@@ -11,8 +11,8 @@ from telegram.ext import (
     CommandHandler, MessageHandler, filters, CallbackContext
 )
 import google.generativeai as genai
-from flask import Flask, render_template_string # <-- Добавляем render_template_string
-import threading # <-- Добавляем импорт threading
+from flask import Flask, render_template_string
+import threading
 
 # Создаем простое Flask-приложение для веб-сервера
 flask_app = Flask(__name__)
@@ -95,6 +95,14 @@ current_model_idx = 0
 available_models: List[str] = MODELS.copy()
 last_model_check_ts: float = 0.0
 
+# ----------- Персона бота и инструкции для LLM -----------
+BOT_PERSONA_PROMPT = """
+Ты - умный и полезный ассистент по имени Сигмоида. 
+Не упоминай, что ты Google, Gemini или большая языковая модель. 
+Форматируй свои ответы, используя Telegram-совместимый MarkdownV2. 
+Будь внимателен к правилам экранирования специальных символов в MarkdownV2 (например, '.', '!', '-', '+', '(', ')', '[', ']', '_', '*', '`', '~', '>', '#', '=', '|', '{', '}').
+"""
+
 # ---------- Логи ----------
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -108,7 +116,7 @@ class ChatConfig:
     autopost_enabled: bool = False
     interval: int = 14400          # 4 ч
     min_messages: int = 10
-    msg_size: str = "medium"      # small/medium/large
+    msg_size: str = ""      # small/medium/large/"" (по умолчанию)
     last_post_ts: float = 0.0
     new_msg_counter: int = 0
 
