@@ -13,6 +13,7 @@ from telegram.ext import (
 import google.generativeai as genai
 from flask import Flask, render_template_string
 import threading
+import requests # <-- Добавляем импорт requests
 
 # Создаем простое Flask-приложение для веб-сервера
 flask_app = Flask(__name__)
@@ -504,56 +505,62 @@ async def autopost_job(context: CallbackContext):
         except Exception as e:
             log.error(f"Autopost failed for chat {chat_id}: {e}")
 
-# ---------- MAIN ----------
-async def main(): # Вернули main в асинхронный режим
+# ---------- Main ----------
+def main(): # <--- Снова делаем main синхронной
     token = os.getenv("TG_TOKEN")
     if not token:
         raise RuntimeError("TG_TOKEN env not set")
 
+    # Получаем ID бота с помощью прямого HTTP-запроса
+    try:
+        response = requests.get(f"https://api.telegram.org/bot{token}/getMe")
+        response.raise_for_status() # Вызовет ошибку для плохих статусов HTTP
+        bot_info = response.json().get('result', {})
+        bot_id = bot_info.get('id')
+        bot_username = bot_info.get('username')
+        if not bot_id or not bot_username:
+            raise RuntimeError("Не удалось получить информацию о боте от Telegram.")
+        log.info(f"Получен ID бота: {bot_id}, Username: @{bot_username}")
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Ошибка при получении информации о боте от Telegram: {e}")
+
     app = ApplicationBuilder().token(token).build()
 
-    await app.initialize() # <--- Явная инициализация бота, чтобы app.bot.id был доступен
-
-    # Теперь app.bot.id будет доступен
-    bot_id = app.bot.id
+    # Инициализация для JobQueue и других компонентов
+    # app.initialize() не вызываем здесь напрямую, так как main синхронная.
+    # run_polling() сама вызывает инициализацию внутренних компонентов.
+    # Bot ID мы уже получили выше.
 
     # Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("autopost", autopost_switch))
+    app.add_handler(CommandHandler(f"autopost_{bot_username}", autopost_switch)) # Для совместимости с упоминаниями
     app.add_handler(CommandHandler("set_interval", set_interval))
     app.add_handler(CommandHandler("set_msgsize", set_msgsize))
     app.add_handler(CommandHandler("privacy", privacy_cmd))
 
-    # Обработка текстовых сообщений (теперь только по упоминанию бота в группах)
+    # Обработка текстовых сообщений (только по упоминанию бота в группах, обычный текст в личных)
+    # Используем заранее полученный bot_id
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & filters.Mention(bot_id) & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    # Используем job_queue для периодических задач (если доступен)
+    # Запускаем Flask приложение в отдельном потоке
+    threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))).start()
+    log.info("Flask app started on port 10000")
+
+
     if app.job_queue:
-        # Первая проверка моделей через 60 секунд после старта
-        app.job_queue.run_repeating(check_models_job, interval=14400, first=60)
-        app.job_queue.run_repeating(autopost_job, interval=60, first=60)
+        app.job_queue.run_repeating(check_models_job, interval=14400, first=60) # Каждые 4 часа
+        app.job_queue.run_repeating(autopost_job, interval=60, first=60) # Каждую минуту
         log.info("JobQueue initialized")
     else:
         log.warning("JobQueue not available - scheduled jobs disabled")
 
     log.info("Bot started 🚀")
-
-    # --- Запускаем Flask-сервер в отдельном потоке ---
-    # Render передает порт через переменную окружения PORT
-    port = int(os.environ.get("PORT", 8080))
-    flask_thread = threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=port, use_reloader=False))
-    flask_thread.daemon = True # Поток завершится, когда завершится основной процесс
-    flask_thread.start()
-    log.info(f"Flask app started on port {port}")
-    # ---------------------------------------------------
-
-    # Используем await для run_polling
-    await app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
-
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None) # <--- Запускаем run_polling синхронно
 
 if __name__ == "__main__":
-    asyncio.run(main()) # <--- Запускаем асинхронную main
+    main() # <--- Вызываем синхронную main
