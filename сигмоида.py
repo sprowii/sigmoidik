@@ -525,8 +525,9 @@ def main():
     app.add_handler(CommandHandler("set_minmsgs", set_minmsgs))
     app.add_handler(CommandHandler("set_msgsize", set_msgsize))
 
-    # messages
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    # Обработка текстовых сообщений
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & filters.Mention(app.bot.id) & ~filters.COMMAND, handle_msg))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Используем job_queue для периодических задач (если доступен)
