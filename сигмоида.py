@@ -86,7 +86,7 @@ HTML_TEMPLATE = """
         </div>
         <script type="text/javascript" async src="https://tenor.com/embed.js"></script>
         <br>
-        <a href="https://sprouee.ru" target="_blank" class="button-link">Сайт создателей</a>
+        <a href="https://xn--80aqtedp.xn--p1ai/" target="_blank" class="button-link">Сайт создателей</a>
     </div>
 </body>
 </html>
