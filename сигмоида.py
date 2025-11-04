@@ -5,7 +5,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple, Any
 from PIL import Image
 from telegram import Update
-from telegram.constants import ChatType, MessageEntityType, ParseMode, Chat, ChatMember
+from telegram.constants import ChatType, MessageEntityType, ParseMode, ChatMember
 from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder, ContextTypes,
@@ -492,10 +492,10 @@ async def delete_data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_bot_admin = (str(user_id) == ADMIN_ID) # Проверяем, является ли текущий пользователь главным админом бота
 
     can_delete = False
-    if chat_type == Chat.PRIVATE:
+    if chat_type == ChatType.PRIVATE:
         can_delete = True # В личных чатах любой пользователь может удалить свои данные
         log.info(f"User {username} ({user_id}) in private chat requested to delete their data.")
-    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+    elif chat_type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if is_bot_admin:
             can_delete = True # Главный админ бота может удалять данные в группах
             log.info(f"Bot admin {username} ({user_id}) in group chat ({chat_id}) requested to delete chat data.")
