@@ -2,7 +2,7 @@
 # filename: wizard_bot.py
 import os, asyncio, logging, time, io, re, json, atexit
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from PIL import Image
 from telegram import Update, File
 from telegram.constants import ChatType, MessageEntityType, ParseMode
@@ -192,7 +192,7 @@ def get_cfg(chat_id: int) -> ChatConfig:
         configs[chat_id] = ChatConfig()
     return configs[chat_id]
 
-def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[str], str, Optional[genai.types.FunctionCall]]:
+def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[str], str, Optional[Any]]:
     global current_key_idx, current_model_idx
     chat_history = history.get(chat_id, [])
 
@@ -200,8 +200,14 @@ def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[st
         log.info(f"Summarizing history for chat {chat_id}...")
         try:
             summary_prompt = "Summarize this conversation in a concise paragraph for context."
-            summary_model = genai.GenerativeModel("gemini-2.5-flash-preview", api_key=API_KEYS[current_key_idx])
-            response = summary_model.generate_content(chat_history + [{'role': 'user', 'parts': [{'text': summary_prompt}]}])
+            # Включаем system_instruction и используем start_chat, чтобы инструкция применялась корректно
+            summary_model = genai.GenerativeModel(
+                "gemini-2.5-flash-preview",
+                api_key=API_KEYS[current_key_idx],
+                system_instruction=BOT_PERSONA_PROMPT
+            )
+            summary_session = summary_model.start_chat(history=chat_history)
+            response = summary_session.send_message(summary_prompt)
             summary = response.text
             new_history = [
                 {'role': 'user', 'parts': [{'text': "Start of conversation."}]},
@@ -228,14 +234,16 @@ def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[st
                     "parameters": {"type": "OBJECT", "properties": {"prompt": {"type": "STRING", "description": "The image description."}}, "required": ["prompt"]}
                 }])]
                 model = genai.GenerativeModel(model_name, tools=tools, system_instruction=BOT_PERSONA_PROMPT)
-                contents = chat_history + [{'role': 'user', 'parts': prompt_parts}]
-                response = model.generate_content(contents)
+                # Используем чат-сессию, чтобы system_instruction применялась вместе с историей
+                chat_session = model.start_chat(history=chat_history)
+                response = chat_session.send_message(prompt_parts)
                 
                 if response.candidates and response.candidates[0].content.parts[0].function_call:
                     return None, model_name, response.candidates[0].content.parts[0].function_call
                 
                 answer = response.text
-                history[chat_id] = contents + [{'role': 'model', 'parts': [{'text': answer}]}]
+                # Обновляем историю из сессии для точного контекста
+                history[chat_id] = chat_session.history
                 current_key_idx, current_model_idx = key_idx, model_idx
                 return answer, model_name, None
             except Exception as e:
