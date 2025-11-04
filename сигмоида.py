@@ -816,11 +816,12 @@ async def handle_text_and_photo(update: Update, context: ContextTypes.DEFAULT_TY
     prompt_parts = []
     if text: prompt_parts.append(answer_size_prompt(cfg.msg_size) + text)
     if update.message.photo:
-        file = await update.message.photo[-1].get_file()
+        photo_size = update.message.photo[-1]
+        file = await photo_size.get_file()
         image_buffer = io.BytesIO()
         await file.download_to_memory(out=image_buffer)
         file_bytes = image_buffer.getvalue()
-        mime_type = file.mime_type or "image/jpeg"
+        mime_type = getattr(photo_size, "mime_type", None) or getattr(file, "mime_type", None) or "image/jpeg"
         prompt_parts.insert(0, {"mime_type": mime_type, "data": file_bytes})
 
     if not prompt_parts: return
