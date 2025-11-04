@@ -13,9 +13,12 @@ from telegram.ext import (
 )
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, ContentType, PartType, Tool
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request, abort, send_from_directory
 import threading
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Создаем простое Flask-приложение для веб-сервера
 flask_app = Flask(__name__)
@@ -56,6 +59,24 @@ HTML_TEMPLATE = """
 def home():
     return render_template_string(HTML_TEMPLATE)
 
+@flask_app.route('/admin/download/history')
+def download_history():
+    """Секретный эндпоинт для скачивания истории.
+    Доступен только при передаче корректного ключа в query-параметре `key`.
+    """
+    provided_key = request.args.get('key')
+    if not DOWNLOAD_KEY or provided_key != DOWNLOAD_KEY:
+        abort(403)
+
+    try:
+        return send_from_directory(
+            directory=DATA_DIR,
+            path='history.json',
+            as_attachment=True
+        )
+    except FileNotFoundError:
+        abort(404)
+
 # ---------- Политика конфиденциальности ----------
 PRIVACY_POLICY_TEXT = """
 <b>Политика конфиденциальности и обработки данных Сигмоида</b>
@@ -65,6 +86,8 @@ PRIVACY_POLICY_TEXT = """
 Используя бота, вы соглашаетесь с передачей данных в Google для их обработки и хранением данных на сервере.
 
 <b>Согласие:</b> Продолжая использовать бота в личных сообщениях или отправляя упоминания боту в групповых чатах, вы подтверждаете свое согласие с данной политикой. Администраторы групповых чатов несут ответственность за информирование участников о том, что их сообщения могут обрабатываться ботом через сторонний API.
+
+<b>Улучшение сервиса:</b> Для целей отладки и повышения качества сервиса разработчики могут иметь доступ к анонимизированной истории диалогов. Эти данные используются исключительно для улучшения работы бота и не передаются третьим лицам, за исключением случаев, описанных в этой политике.
 
 <b>Дополнительно:</b> Наш бот также подпадает под действие <b>Стандартной политики конфиденциальности Telegram для ботов</b>. Ознакомиться с ней можно по ссылке: <a href="https://telegram.org/privacy-tpa">https://telegram.org/privacy-tpa</a>.
 
@@ -82,9 +105,13 @@ if not API_KEYS:
     raise RuntimeError("Необходимо установить хотя бы одну переменную окружения GEMINI_API_KEY_1 или GEMINI_API_KEY_2")
 
 MODELS = [
-    "gemini-1.5-pro-latest", "gemini-1.5-flash-latest",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-preview",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite-preview",
 ]
-MAX_HISTORY = 20
+MAX_HISTORY = 10
 current_key_idx = 0
 current_model_idx = 0
 available_models: List[str] = MODELS.copy()
@@ -108,6 +135,7 @@ log = logging.getLogger("wizardbot")
 
 # ---------- Константы и глобальные переменные ----------
 ADMIN_ID = os.getenv("ADMIN_ID")
+DOWNLOAD_KEY = os.getenv("DOWNLOAD_KEY")
 DATA_DIR = "data"
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 CONFIGS_FILE = os.path.join(DATA_DIR, "configs.json")
@@ -172,7 +200,7 @@ def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[st
         log.info(f"Summarizing history for chat {chat_id}...")
         try:
             summary_prompt = "Summarize this conversation in a concise paragraph for context."
-            summary_model = genai.GenerativeModel("gemini-1.5-flash-latest", api_key=API_KEYS[current_key_idx])
+            summary_model = genai.GenerativeModel("gemini-2.5-flash-preview", api_key=API_KEYS[current_key_idx])
             response = summary_model.generate_content(chat_history + [{'role': 'user', 'parts': [{'text': summary_prompt}]}])
             summary = response.text
             new_history = [
@@ -219,7 +247,7 @@ def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[st
 
 async def llm_generate_image(prompt: str) -> Tuple[Optional[bytes], str]:
     global current_key_idx
-    model_name = "gemini-1.5-flash-latest"
+    model_name = "gemini-2.5-flash-preview"
     for key_try in range(len(API_KEYS)):
         key_idx = (current_key_idx + key_try) % len(API_KEYS)
         try:
@@ -478,6 +506,8 @@ def main():
 
     token, admin_id = os.getenv("TG_TOKEN"), os.getenv("ADMIN_ID")
     if not token or not admin_id: raise RuntimeError("TG_TOKEN и ADMIN_ID должны быть установлены")
+    if not DOWNLOAD_KEY:
+        log.warning("DOWNLOAD_KEY не установлен. Скачивание истории через веб будет недоступно.")
     
     try:
         bot_info = requests.get(f"https://api.telegram.org/bot{token}/getMe").json().get('result', {})
