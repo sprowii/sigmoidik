@@ -693,34 +693,13 @@ async def handle_text_and_photo(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
-    media = None
-    prompt = ""
-    media_mime_type = None # Добавляем переменную для сохранения mime_type
     
-    if update.message.voice:
-        media = update.message.voice
-        prompt = "Расшифруй это голосовое сообщение:"
-        media_mime_type = media.mime_type # Сохраняем mime_type
-    elif update.message.video:
-        media = update.message.video
-        prompt = "Опиши, что происходит на этом видео:"
-        media_mime_type = media.mime_type # Сохраняем mime_type
-    elif update.message.video_note:
-        media = update.message.video_note
-        prompt = "Опиши это видео-сообщение:"
-        media_mime_type = media.mime_type # Сохраняем mime_type
-        
-    if not media: return
-    chat_id = update.effective_chat.id
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    file = await media.get_file()
-    media_buffer = io.BytesIO()
-    await file.download_to_memory(out=media_buffer)
-    file_bytes = media_buffer.getvalue()
-    
-    # Используем сохраненный media_mime_type
-    prompt_parts = [{"mime_type": media_mime_type, "data": file_bytes}, {"text": prompt}]
-    await send_bot_response(update, context, chat_id, prompt_parts)
+    # Бот пока не умеет обрабатывать медиа (голосовые, видео, видео-кружочки)
+    # так как Gemini API не поддерживает аудио, а для видео нужна дополнительная настройка
+    await update.message.reply_text(
+        "😔 Извините, я пока не умею обрабатывать голосовые сообщения, видео и видео-кружочки.\n\n"
+        "Пожалуйста, опишите ваш вопрос текстом или отправьте фото — с ними я работаю отлично!"
+    )
 # ---------- Задачи ----------
 async def check_models_job(context: CallbackContext):
     await asyncio.get_running_loop().run_in_executor(None, check_available_models)
