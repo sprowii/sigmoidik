@@ -11,7 +11,7 @@ from telegram.ext import (
     ApplicationBuilder, ContextTypes,
     CommandHandler, MessageHandler, filters, CallbackContext
 )
-import google.generai as genai
+import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, ContentType, PartType, Tool, FunctionCall
 from flask import Flask, render_template_string
 import threading
