@@ -822,7 +822,7 @@ async def handle_text_and_photo(update: Update, context: ContextTypes.DEFAULT_TY
         await file.download_to_memory(out=image_buffer)
         file_bytes = image_buffer.getvalue()
         mime_type = getattr(photo_size, "mime_type", None) or getattr(file, "mime_type", None) or "image/jpeg"
-        prompt_parts.insert(0, genai.types.Part(inline_data=genai.types.Blob(mime_type=mime_type, data=file_bytes)))
+        prompt_parts.insert(0, {"inline_data": {"mime_type": mime_type, "data": file_bytes}})
 
     if not prompt_parts: return
     await send_bot_response(update, context, chat_id, prompt_parts)
