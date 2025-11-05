@@ -261,23 +261,23 @@ def _deserialize_part(part: Any):
         inline_data = part.get('inline_data')
         if isinstance(inline_data, dict) and inline_data.get('mime_type') and inline_data.get('data'):
             try:
-                return genai.types.Part(
-                    inline_data=genai.types.Blob(
-                        mime_type=inline_data['mime_type'],
-                        data=base64.b64decode(inline_data['data'].encode('utf-8'))
-                    )
-                )
+                return {
+                    'inline_data': {
+                        'mime_type': inline_data['mime_type'],
+                        'data': base64.b64decode(inline_data['data'].encode('utf-8'))
+                    }
+                }
             except Exception as exc:
                 log.warning(f"Не удалось десериализовать часть истории: {exc}")
                 return {'inline_data': inline_data}
         if part.get('mime_type') and part.get('data'):
             try:
-                return genai.types.Part(
-                    inline_data=genai.types.Blob(
-                        mime_type=part['mime_type'],
-                        data=base64.b64decode(part['data'].encode('utf-8'))
-                    )
-                )
+                return {
+                    'inline_data': {
+                        'mime_type': part['mime_type'],
+                        'data': base64.b64decode(part['data'].encode('utf-8'))
+                    }
+                }
             except Exception as exc:
                 log.warning(f"Не удалось десериализовать часть истории (плоская запись): {exc}")
                 return {'inline_data': part}
