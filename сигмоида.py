@@ -206,12 +206,12 @@ user_profiles: Dict[int, Dict[int, Dict[str, Any]]] = {}
 # ---------- Сохранение и загрузка данных ----------
 def convert_part_to_dict(part):
     """Конвертирует Part объект в словарь для JSON сериализации."""
-    if hasattr(part, 'text'):
-        return {'text': part.text}
-    elif hasattr(part, 'inline_data') and hasattr(part.inline_data, 'mime_type') and hasattr(part.inline_data, 'data'):
+    if hasattr(part, 'inline_data') and getattr(part.inline_data, 'data', None) is not None and getattr(part.inline_data, 'mime_type', None):
         # Кодируем бинарные данные изображения в base64 строку
         encoded_data = base64.b64encode(part.inline_data.data).decode('utf-8')
         return {'inline_data': {'mime_type': part.inline_data.mime_type, 'data': encoded_data}}
+    if hasattr(part, 'text'):
+        return {'text': part.text}
     elif isinstance(part, dict):
         inline_data = part.get('inline_data')
         if isinstance(inline_data, dict) and inline_data.get('mime_type') and inline_data.get('data') is not None:
@@ -822,7 +822,7 @@ async def handle_text_and_photo(update: Update, context: ContextTypes.DEFAULT_TY
         await file.download_to_memory(out=image_buffer)
         file_bytes = image_buffer.getvalue()
         mime_type = getattr(photo_size, "mime_type", None) or getattr(file, "mime_type", None) or "image/jpeg"
-        prompt_parts.insert(0, {"mime_type": mime_type, "data": file_bytes})
+        prompt_parts.insert(0, genai.types.Part(inline_data=genai.types.Blob(mime_type=mime_type, data=file_bytes)))
 
     if not prompt_parts: return
     await send_bot_response(update, context, chat_id, prompt_parts)
