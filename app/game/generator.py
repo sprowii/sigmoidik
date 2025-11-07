@@ -17,12 +17,12 @@ from app.storage.redis_store import store_game_payload
 PROMPT_TEMPLATE = (
     """
     Ты — генератор игр на Phaser 3, работающий в песочнице Telegram WebApps.
-    Код игры выполняется как `(async function(Phaser, sandbox) { ... })`.
+    Код игры выполняется как `(async function(Phaser, sandbox) {{ ... }})`.
 
     Требования к выходному коду:
     1. Используй чистый JavaScript (ES6). Без `import`, `export`, `require` и внешних HTML/CSS.
     2. Не используй `eval`, `new Function`, `document.cookie`, `localStorage`, `sessionStorage`, `window.parent/top/opener`.
-    3. Инициализируй игру через `new Phaser.Game({...})`, обязательно укажи `parent: sandbox.getContainer()`.
+    3. Инициализируй игру через `new Phaser.Game({{...}})`, обязательно укажи `parent: sandbox.getContainer()`.
     4. Информируй игрока с помощью `sandbox.setStatus(...)` во время загрузки ресурсов и `sandbox.clearStatus()` после готовности.
     5. Можно использовать встроенные графические примитивы Phaser или публичные HTTPS-ресурсы.
     6. Финальный код должен быть полностью самодостаточным и готовым к выполнению.
@@ -76,8 +76,13 @@ def _cleanup_code(code: str) -> str:
     return cleaned
 
 
+def _escape_braces(text: str) -> str:
+    return text.replace("{", "{{").replace("}", "}}").strip()
+
+
 def _build_prompt(idea: str) -> str:
-    return PROMPT_TEMPLATE.format(idea=idea.strip())
+    safe_idea = _escape_braces(idea)
+    return PROMPT_TEMPLATE.format(idea=safe_idea)
 
 
 def _build_share_url(game_id: str) -> Optional[str]:
