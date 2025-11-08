@@ -106,6 +106,7 @@ async function wrapAndExecute(code, sandbox) {
     }
 
     const phaser = await getPhaserInstance();
+    sandbox.setStatus(`Phaser v${phaser.VERSION}: запуск игры...`);
 
     try {
         const result = executable(phaser, sandbox);
@@ -116,6 +117,7 @@ async function wrapAndExecute(code, sandbox) {
                 setStatus("Игра завершилась с ошибкой.", true);
             });
         }
+        sandbox.setStatus("Игра запущена");
     } catch (runtimeError) {
         console.error("Игра завершилась с ошибкой", runtimeError);
         throw new Error(runtimeError?.message || "Игра завершилась с ошибкой.");
@@ -193,7 +195,8 @@ async function bootstrap() {
 
     try {
         await wrapAndExecute(code, sandbox);
-        sandbox.clearStatus();
+        const startupMessage = summary ? `${summary}` : "Игра сгенерирована и запущена.";
+        sandbox.setStatus(startupMessage);
         if (summary) {
             console.info("Описание игры:", summary);
         }
@@ -204,6 +207,17 @@ async function bootstrap() {
 
     window.addEventListener("beforeunload", () => sandbox.cleanup(), { once: true });
 }
+
+window.addEventListener("error", (event) => {
+    console.error("Global error", event.error || event.message);
+    setStatus(`Ошибка: ${event.message}`, true);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+    console.error("Unhandled rejection", event.reason);
+    const message = event.reason && event.reason.message ? event.reason.message : String(event.reason);
+    setStatus(`Необработанное исключение: ${message}`, true);
+});
 
 bootstrap().catch((fatalError) => {
     console.error("Критическая ошибка", fatalError);
