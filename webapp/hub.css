@@ -77,6 +77,8 @@ body {
     padding: 6px;
     backdrop-filter: blur(16px);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 .nav-pill a {
@@ -92,6 +94,18 @@ body {
 .nav-pill a:hover {
     color: var(--text-primary);
     background: rgba(140, 140, 255, 0.14);
+}
+
+@media (max-width: 560px) {
+    .nav-pill {
+        width: 100%;
+        gap: 8px;
+    }
+
+    .nav-pill a {
+        flex: 1 1 calc(50% - 8px);
+        text-align: center;
+    }
 }
 
 .session {
@@ -316,6 +330,25 @@ body {
         flex-direction: row;
         align-items: center;
         justify-content: space-between;
+    }
+}
+
+.privacy-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.privacy-note {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+    .privacy-actions {
+        align-items: center;
+        text-align: center;
     }
 }
 

@@ -47,6 +47,16 @@ MODELS: List[str] = [
     "gemini-2.5-flash-lite-preview",
 ]
 
+IMAGE_MODEL_NAME = os.getenv("IMAGE_MODEL_NAME", "gemini-2.0-flash-preview-image")
+
+POLLINATIONS_ENABLED = os.getenv("POLLINATIONS_ENABLED", "false").lower() in {"1", "true", "yes"}
+POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "flux")
+POLLINATIONS_WIDTH = int(os.getenv("POLLINATIONS_WIDTH", "1024"))
+POLLINATIONS_HEIGHT = int(os.getenv("POLLINATIONS_HEIGHT", "1024"))
+POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://pollinations.ai")
+POLLINATIONS_SEED = os.getenv("POLLINATIONS_SEED")
+POLLINATIONS_TIMEOUT = float(os.getenv("POLLINATIONS_TIMEOUT", "30"))
+
 MAX_HISTORY = 10
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB предел на сохранение изображений
 

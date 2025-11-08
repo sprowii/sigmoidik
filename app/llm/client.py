@@ -1,11 +1,27 @@
 ﻿# Copyright (c) 2025 sprouee
+import random
 import time
+import urllib.parse
 from typing import Any, List, Optional, Tuple
 
 import google.generativeai as genai
+import requests
 from google.generativeai.types import PartType, Tool
 
-from app.config import API_KEYS, BOT_PERSONA_PROMPT, MAX_HISTORY, MODELS
+from app.config import (
+    API_KEYS,
+    BOT_PERSONA_PROMPT,
+    IMAGE_MODEL_NAME,
+    MAX_HISTORY,
+    MODELS,
+    POLLINATIONS_BASE_URL,
+    POLLINATIONS_ENABLED,
+    POLLINATIONS_HEIGHT,
+    POLLINATIONS_MODEL,
+    POLLINATIONS_SEED,
+    POLLINATIONS_TIMEOUT,
+    POLLINATIONS_WIDTH,
+)
 from app.logging_config import log
 from app.state import history
 
@@ -13,17 +29,15 @@ current_key_idx = 0
 current_model_idx = 0
 available_models: List[str] = MODELS.copy()
 last_model_check_ts: float = 0.0
-
-
 def _summarize_history(chat_id: int) -> None:
     chat_history = history.get(chat_id, [])
     if len(chat_history) <= MAX_HISTORY:
         return
     log.info(f"Summarizing history for chat {chat_id}...")
     try:
+        genai.configure(api_key=API_KEYS[current_key_idx])
         summary_model = genai.GenerativeModel(
             "gemini-2.5-flash-preview",
-            api_key=API_KEYS[current_key_idx],
             system_instruction=BOT_PERSONA_PROMPT,
         )
         summary_session = summary_model.start_chat(history=chat_history)
@@ -94,22 +108,57 @@ def llm_request(chat_id: int, prompt_parts: List[PartType]) -> Tuple[Optional[st
 
 def llm_generate_image(prompt: str) -> Tuple[Optional[bytes], str]:
     global current_key_idx
-    model_name = "gemini-2.5-flash-preview"
+    if POLLINATIONS_ENABLED:
+        image_bytes, provider = _generate_image_via_pollinations(prompt)
+        if image_bytes:
+            return image_bytes, provider
+
+    model_name = IMAGE_MODEL_NAME
     for key_try in range(len(API_KEYS)):
         key_idx = (current_key_idx + key_try) % len(API_KEYS)
         try:
             genai.configure(api_key=API_KEYS[key_idx])
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                f"Draw: {prompt}",
-                generation_config={"response_mime_type": "image/png"},
-            )
-            if response.parts:
+            model = genai.ImageGenerationModel(model_name=model_name)
+            response = model.generate_images(prompt=prompt)
+            if response.images:
                 current_key_idx = key_idx
-                return response.parts[0].inline_data.data, model_name
+                image = response.images[0]
+                image_bytes = getattr(image, "image_bytes", None) or getattr(image, "data", None)
+                if image_bytes:
+                    return image_bytes, model_name
+                log.warning("Image generation returned empty data on key %s", key_idx + 1)
         except Exception as exc:
             log.warning(f"Image generation failed on key {key_idx + 1}: {exc}")
     return None, model_name
+
+
+def _generate_image_via_pollinations(prompt: str) -> Tuple[Optional[bytes], str]:
+    seed_value: Optional[str]
+    if POLLINATIONS_SEED:
+        seed_value = POLLINATIONS_SEED
+    else:
+        seed_value = str(random.randint(0, 1_000_000_000))
+
+    encoded_prompt = urllib.parse.quote_plus(prompt)
+    params = {
+        "width": str(POLLINATIONS_WIDTH),
+        "height": str(POLLINATIONS_HEIGHT),
+        "seed": seed_value,
+        "model": POLLINATIONS_MODEL,
+    }
+    query = "&".join(f"{key}={urllib.parse.quote_plus(value)}" for key, value in params.items())
+    url = f"{POLLINATIONS_BASE_URL.rstrip('/')}/p/{encoded_prompt}?{query}"
+    try:
+        response = requests.get(url, timeout=POLLINATIONS_TIMEOUT)
+        response.raise_for_status()
+        if response.content:
+            provider_name = f"pollinations:{POLLINATIONS_MODEL}"
+            log.info("Generated image via Pollinations (%s)", provider_name)
+            return response.content, provider_name
+        log.warning("Pollinations returned empty image content for prompt: %s", prompt)
+    except Exception as exc:
+        log.warning("Pollinations image generation failed: %s", exc)
+    return None, f"pollinations:{POLLINATIONS_MODEL}"
 
 
 def check_available_models() -> List[str]:

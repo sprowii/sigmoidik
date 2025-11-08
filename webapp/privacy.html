@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сигмоида · Политика конфиденциальности</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/webapp/hub.css" />
+    <style>
+        .privacy-container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 40px 16px 64px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .privacy-container h1 {
+            font-family: var(--font-display);
+            letter-spacing: 0.12em;
+        }
+        .privacy-card {
+            background: rgba(12, 12, 12, 0.92);
+            border-radius: 28px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            padding: 28px;
+            box-shadow: var(--shadow-strong);
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .privacy-card h2 {
+            margin: 0;
+            font-size: 1.4rem;
+            font-family: var(--font-display);
+            letter-spacing: 0.08em;
+        }
+        .privacy-card p {
+            margin: 0;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        .privacy-card ul {
+            margin: 0;
+            padding-left: 20px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        .privacy-footer {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            letter-spacing: 0.06em;
+        }
+    </style>
+</head>
+<body>
+    <div class="background-glow"></div>
+    <div class="privacy-container">
+        <header>
+            <h1>Политика конфиденциальности</h1>
+            <p><i>Дата последнего обновления: 4 ноября 2025 г.</i></p>
+        </header>
+        <article class="privacy-card">
+            <h2>Собираемые данные</h2>
+            <p>Бот сохраняет историю переписки (текст, фото, медиа), настройки и публичную информацию об участниках (username, имя, время обращения) для поддержания контекста диалога и аналитики работы.</p>
+        </article>
+        <article class="privacy-card">
+            <h2>Использование данных</h2>
+            <p>Собранные данные применяются исключительно для обеспечения непрерывности диалога, генерации игр и улучшения качества ответов.</p>
+        </article>
+        <article class="privacy-card">
+            <h2>Хранение и безопасность</h2>
+            <p>Информация хранится в удалённой базе данных Redis. Мы предпринимаем разумные меры для защиты данных от несанкционированного доступа.</p>
+        </article>
+        <article class="privacy-card">
+            <h2>Удаление ваших данных</h2>
+            <p>Вы можете удалить все сведения о себе:</p>
+            <ul>
+                <li><b>В личных чатах:</b> отправьте команду <code>/delete_data</code>.</li>
+                <li><b>В групповых чатах:</b> команду <code>/delete_data</code> могут использовать только администраторы группы.</li>
+            </ul>
+            <p>После удаления вся история и настройки для чата стираются безвозвратно.</p>
+        </article>
+        <article class="privacy-card">
+            <h2>Сторонние сервисы</h2>
+            <p>Для обработки сообщений используются модели Google Gemini. При генерации изображений описание и результат могут быть отправлены в сервис Pollinations (<a href="https://pollinations.ai" target="_blank" rel="noopener">https://pollinations.ai</a>).</p>
+        </article>
+        <p class="privacy-footer">Возврат на <a href="/webapp/hub.html">главную страницу</a> или используйте команду <code>/privacy</code> в боте.</p>
+    </div>
+</body>
+</html>
+
