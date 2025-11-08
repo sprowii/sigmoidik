@@ -48,7 +48,7 @@ function validateCodeSafety(code) {
 function createSandboxEnvironment() {
     const cleanupCallbacks = [];
     return {
-        version: Phaser.VERSION,
+        version: null,
         setStatus,
         clearStatus,
         getContainer: () => containerElement,
@@ -106,6 +106,7 @@ async function wrapAndExecute(code, sandbox) {
     }
 
     const phaser = await getPhaserInstance();
+    sandbox.version = phaser.VERSION;
     sandbox.setStatus(`Phaser v${phaser.VERSION}: запуск игры...`);
 
     try {
