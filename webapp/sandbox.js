@@ -95,8 +95,28 @@ async function getPhaserInstance() {
     });
 }
 
+function buildExecutableSource(code) {
+    const trimmed = code.trim();
+    const callTemplate = (expression) => `"use strict";\nreturn (${expression})(Phaser, sandbox);`;
+    if (/^\(\s*async\s*function\b/i.test(trimmed) || /^\(\s*function\b/i.test(trimmed) || /^\(\s*async\s*\(/i.test(trimmed) || /^\(\s*\)\s*=>/.test(trimmed)) {
+        return callTemplate(trimmed);
+    }
+    if (/^async\s+function\b/i.test(trimmed) || /^function\b/i.test(trimmed)) {
+        return `"use strict";\nconst __generated = ${trimmed};\nreturn __generated(Phaser, sandbox);`;
+    }
+    if (/^export\s+default\s+async\s*function\b/i.test(trimmed) || /^export\s+default\s+function\b/i.test(trimmed)) {
+        const withoutExport = trimmed.replace(/^export\s+default\s+/i, "");
+        return `"use strict";\nconst __generated = ${withoutExport};\nreturn __generated(Phaser, sandbox);`;
+    }
+    if (/^export\s+default\s*\(/i.test(trimmed)) {
+        const expression = trimmed.replace(/^export\s+default\s+/i, "");
+        return callTemplate(expression);
+    }
+    return `"use strict";\n${code}`;
+}
+
 async function wrapAndExecute(code, sandbox) {
-    const wrapped = `return (async function(Phaser, sandbox) {\n"use strict";\n${code}\n})(Phaser, sandbox);`;
+    const wrapped = buildExecutableSource(code);
     let executable;
     try {
         executable = window.Function("Phaser", "sandbox", wrapped);
