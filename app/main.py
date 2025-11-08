@@ -49,6 +49,7 @@ def build_application(token: str, bot_username: str):
         "reset": handlers.reset,
         "draw": handlers.draw_image_cmd,
         "game": handlers.game_cmd,
+        "login": handlers.login_cmd,
         "settings": handlers.settings_cmd,
         "delete_data": handlers.delete_data,
         "autopost": handlers.autopost_switch,
