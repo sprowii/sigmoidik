@@ -9,12 +9,21 @@ const state = {
     currentTweakGameId: null,
 };
 
+const decodeCodes = (codes) => String.fromCharCode(...codes);
+
+const routes = {
+    games: decodeCodes([47, 97, 112, 105, 47, 103, 97, 109, 101, 115]),
+    authSession: decodeCodes([47, 97, 112, 105, 47, 97, 117, 116, 104, 47, 115, 101, 115, 115, 105, 111, 110]),
+    authLogin: decodeCodes([47, 97, 112, 105, 47, 97, 117, 116, 104, 47, 108, 111, 103, 105, 110]),
+    authLogout: decodeCodes([47, 97, 112, 105, 47, 97, 117, 116, 104, 47, 108, 111, 103, 111, 117, 116]),
+    tweakSuffix: decodeCodes([47, 116, 119, 101, 97, 107]),
+};
+
 const elements = {
     filters: document.getElementById("filters"),
     chips: Array.from(document.querySelectorAll(".filters .chip")),
     gameList: document.getElementById("game-list"),
     loadMore: document.getElementById("load-more"),
-    infoBlock: document.getElementById("info-block"),
     sessionControls: document.getElementById("session-controls"),
     generatorForm: document.getElementById("generator-form"),
     generatorTextarea: document.getElementById("generator-idea"),
@@ -139,8 +148,8 @@ function renderEmptyState(scope) {
     const article = document.createElement("article");
     article.className = "empty-state";
     article.innerHTML = scope === "mine"
-        ? "Похоже, у тебя ещё нет игр. Сгенерируй первую в боте командой <code>/game</code>."
-        : "Игры скоро появятся. Попробуй обновить страницу чуть позже.";
+        ? "Пока что здесь пусто. Сгенерируй игру через форму выше или попроси агента доработать существующую песочницу."
+        : "Игры появятся в ближайшее время. Обнови страницу позже или создай новый проект прямо сейчас.";
     elements.gameList.append(article);
 }
 
@@ -184,7 +193,7 @@ function renderGames(games, reset = false) {
 
 async function fetchSession() {
     try {
-        const response = await fetch("/api/auth/session", { credentials: "same-origin" });
+        const response = await fetch(routes.authSession, { credentials: "same-origin" });
         if (!response.ok) {
             throw new Error("session request failed");
         }
@@ -214,7 +223,7 @@ async function loadGames({ reset = false } = {}) {
     if (state.scope === "mine") {
         params.set("scope", "mine");
     }
-    const response = await fetch(`/api/games?${params.toString()}`);
+    const response = await fetch(`${routes.games}?${params.toString()}`);
     if (!response.ok) {
         setLoading(false);
         if (response.status === 401 && state.scope === "mine") {
@@ -243,7 +252,7 @@ async function loadGames({ reset = false } = {}) {
 
 async function login(code) {
     const payload = { code };
-    const response = await fetch("/api/auth/login", {
+    const response = await fetch(routes.authLogin, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -268,9 +277,9 @@ async function handleGeneratorSubmit(event) {
         setGenerating(false, "Напиши, во что будем играть.", "error");
         return;
     }
-    setGenerating(true, "Генерируем игру...");
+    setGenerating(true, "Собираем сцену и ресурсы...");
     try {
-        const response = await fetch("/api/games", {
+        const response = await fetch(routes.games, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ idea }),
@@ -307,11 +316,14 @@ async function handleTweakSubmit(event) {
     submitButton.disabled = true;
     submitButton.textContent = "Применяем...";
     try {
-        const response = await fetch(`/api/games/${encodeURIComponent(state.currentTweakGameId)}/tweak`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ instructions }),
-        });
+        const response = await fetch(
+            `${routes.games}/${encodeURIComponent(state.currentTweakGameId)}${routes.tweakSuffix}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ instructions }),
+            },
+        );
         if (!response.ok) {
             const text = await response.text();
             throw new Error(text || "Ошибка при изменении игры");
@@ -329,7 +341,7 @@ async function handleTweakSubmit(event) {
 }
 
 async function logout() {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    await fetch(routes.authLogout, { method: "POST", credentials: "same-origin" });
     state.user = null;
     renderSession();
     if (state.scope === "mine") {
