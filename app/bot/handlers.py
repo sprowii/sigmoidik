@@ -390,8 +390,20 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
     loop = asyncio.get_running_loop()
+    effective_user = update.effective_user
+    author_id = effective_user.id if effective_user else None
+    author_username = effective_user.username if effective_user else None
+    author_name = None
+    if effective_user:
+        author_name = (
+            getattr(effective_user, "full_name", None)
+            or " ".join(filter(None, [effective_user.first_name, effective_user.last_name]))
+            or None
+        )
     try:
-        generated: GeneratedGame = await loop.run_in_executor(None, generate_game, chat_id, idea_text)
+        generated: GeneratedGame = await loop.run_in_executor(
+            None, generate_game, chat_id, idea_text, author_id, author_username, author_name
+        )
     except ValueError as exc:
         await message.reply_text(str(exc))
         return

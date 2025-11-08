@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сигмоида · Хаб игр</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/webapp/hub.css" />
+</head>
+<body>
+    <div class="page">
+        <header class="topbar">
+            <div class="branding">
+                <div class="logo">🎮</div>
+                <div class="titles">
+                    <h1>Сигмоида</h1>
+                    <p>Игры, которые придумывает нейросеть вместе с людьми</p>
+                </div>
+            </div>
+            <div class="session" id="session-controls">
+                <button class="button ghost" id="login-button">Войти по коду</button>
+            </div>
+        </header>
+
+        <main class="content">
+            <section class="generator">
+                <h2>Создай игру без бота</h2>
+                <p class="generator-subtitle">Опиши задумку своими словами — нейросеть соберёт Phaser-игру и откроет её в песочнице.</p>
+                <form id="generator-form" class="generator-form">
+                    <label for="generator-idea">Идея игры</label>
+                    <textarea id="generator-idea" name="idea" rows="4" placeholder="Например: аркада про кота, который собирает рыбу и уворачивается от собак" required></textarea>
+                    <div class="generator-actions">
+                        <button type="submit" class="button primary" id="generator-submit">Сгенерировать</button>
+                        <span class="generator-status" id="generator-status"></span>
+                    </div>
+                </form>
+            </section>
+
+            <section class="filters" id="filters">
+                <button class="chip active" data-scope="all">Все</button>
+                <button class="chip" data-scope="mine">Мои</button>
+            </section>
+
+            <section class="info" id="info-block">
+                <h2>Как это работает?</h2>
+                <ol>
+                    <li>В боте придумай идею игры и запусти команду <code>/game</code>.</li>
+                    <li>Чтобы авторизоваться на сайте, попроси бота выдать код входа.</li>
+                    <li>Введи код ниже — и увидишь свои игры в разделе «Мои».</li>
+                </ol>
+            </section>
+
+            <section class="games" id="game-list" aria-live="polite"></section>
+
+            <div class="actions">
+                <button class="button" id="load-more">Показать ещё</button>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>⚡ Нейро-песочница Сигмоида. Игры хранятся ограниченное время — не забудь поделиться ссылкой!</p>
+        </footer>
+    </div>
+
+    <div class="modal hidden" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <div class="modal-content">
+            <h2 id="login-title">Войти по коду</h2>
+            <p class="modal-text">Бот пришлёт тебе код из 6 символов. Введи его здесь, чтобы открыть личный список игр.</p>
+            <form id="login-form">
+                <label for="login-code">Код входа</label>
+                <input id="login-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" maxlength="6" placeholder="ABC123" required />
+                <div class="modal-actions">
+                    <button type="button" class="button ghost" id="login-cancel">Отмена</button>
+                    <button type="submit" class="button primary">Войти</button>
+                </div>
+            </form>
+            <p class="modal-error hidden" id="login-error"></p>
+        </div>
+    </div>
+
+    <template id="game-card-template">
+        <article class="game-card">
+            <header>
+                <h3 class="game-title"></h3>
+                <span class="game-time"></span>
+            </header>
+            <p class="game-summary"></p>
+            <div class="game-meta">
+                <span class="game-model"></span>
+                <span class="game-author"></span>
+            </div>
+            <div class="game-actions">
+                <a class="button primary" target="_blank" rel="noopener" href="#">Играть</a>
+                <button class="button ghost" data-copy>Скопировать ссылку</button>
+                <button class="button ghost" data-tweak>Уточнить игру</button>
+            </div>
+        </article>
+    </template>
+
+    <div class="modal hidden" id="tweak-modal" role="dialog" aria-modal="true" aria-labelledby="tweak-title">
+        <div class="modal-content">
+            <h2 id="tweak-title">Попросить доработку</h2>
+            <p class="modal-text">Расскажи, что изменить. Например: «сделай фон тёмным и добавь больше врагов».</p>
+            <form id="tweak-form">
+                <label for="tweak-instructions">Описание изменений</label>
+                <textarea id="tweak-instructions" name="instructions" rows="4" required></textarea>
+                <div class="modal-actions">
+                    <button type="button" class="button ghost" id="tweak-cancel">Отмена</button>
+                    <button type="submit" class="button primary">Применить</button>
+                </div>
+            </form>
+            <p class="modal-error hidden" id="tweak-error"></p>
+        </div>
+    </div>
+
+    <script type="module" src="/webapp/hub.js"></script>
+</body>
+</html>

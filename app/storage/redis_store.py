@@ -2,9 +2,10 @@
 import asyncio
 import base64
 import json
+import secrets
 import time
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import redis
 from google.generativeai.types import ContentType, PartType
@@ -13,8 +14,12 @@ from telegram import User
 from app.config import (
     CONFIG_KEY_PREFIX,
     GAME_CODE_PREFIX,
+    GAME_LIST_KEY,
     GAME_TTL_SECONDS,
+    GAMES_BY_AUTHOR_PREFIX,
     HISTORY_KEY_PREFIX,
+    LOGIN_CODE_PREFIX,
+    LOGIN_CODE_TTL_SECONDS,
     REDIS_URL,
     USER_KEY_PREFIX,
 )
@@ -257,10 +262,29 @@ def record_user_profile(chat_id: int, user: Optional[User]) -> bool:
     return False
 
 
+def _cleanup_game_indexes(pipeline, cutoff_timestamp: float, author_key: Optional[str]) -> None:
+    pipeline.zremrangebyscore(GAME_LIST_KEY, "-inf", cutoff_timestamp)
+    pipeline.expire(GAME_LIST_KEY, GAME_TTL_SECONDS)
+    if author_key:
+        pipeline.zremrangebyscore(author_key, "-inf", cutoff_timestamp)
+        pipeline.expire(author_key, GAME_TTL_SECONDS)
+
+
 def store_game_payload(game_id: str, payload: Dict[str, Any]) -> None:
     key = f"{GAME_CODE_PREFIX}{game_id}"
+    timestamp = payload.get("created_at") or time.time()
+    author_id = payload.get("author_id")
+    author_key = f"{GAMES_BY_AUTHOR_PREFIX}{author_id}" if author_id else None
+    cutoff = timestamp - GAME_TTL_SECONDS
     try:
-        redis_client.set(key, json.dumps(payload, ensure_ascii=False), ex=GAME_TTL_SECONDS)
+        serialized = json.dumps(payload, ensure_ascii=False)
+        with redis_client.pipeline() as pipe:
+            pipe.set(key, serialized, ex=GAME_TTL_SECONDS)
+            pipe.zadd(GAME_LIST_KEY, {game_id: timestamp})
+            if author_key:
+                pipe.zadd(author_key, {game_id: timestamp})
+            _cleanup_game_indexes(pipe, cutoff, author_key)
+            pipe.execute()
     except Exception as exc:
         log.error(f"Не удалось сохранить игру {game_id} в Redis: {exc}", exc_info=True)
         raise
@@ -281,6 +305,104 @@ def load_game_payload(game_id: str) -> Optional[Dict[str, Any]]:
         decoded: Dict[str, Any] = json.loads(raw_value)
     except json.JSONDecodeError as exc:
         log.warning(f"Некорректный JSON игры {game_id}: {exc}")
+        return None
+    return decoded
+
+
+def _fetch_game_payloads(game_ids: Sequence[str]) -> List[Dict[str, Any]]:
+    if not game_ids:
+        return []
+    keys = [f"{GAME_CODE_PREFIX}{gid}" for gid in game_ids]
+    try:
+        raw_values = redis_client.mget(keys)
+    except Exception as exc:
+        log.error("Не удалось выполнить mget для игр: %s", exc, exc_info=True)
+        return []
+    results: List[Dict[str, Any]] = []
+    for gid, raw_value in zip(game_ids, raw_values):
+        if not raw_value:
+            continue
+        try:
+            decoded = json.loads(raw_value)
+        except json.JSONDecodeError:
+            log.warning("Некорректный JSON при загрузке игры %s из mget", gid)
+            continue
+        decoded.setdefault("id", gid)
+        results.append(decoded)
+    return results
+
+
+def list_recent_games(limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+    try:
+        game_ids = redis_client.zrevrange(GAME_LIST_KEY, offset, offset + limit - 1)
+    except Exception as exc:
+        log.error("Не удалось получить список игр: %s", exc, exc_info=True)
+        return []
+    return _fetch_game_payloads(game_ids)
+
+
+def list_games_for_author(author_id: int, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+    key = f"{GAMES_BY_AUTHOR_PREFIX}{author_id}"
+    try:
+        game_ids = redis_client.zrevrange(key, offset, offset + limit - 1)
+    except Exception as exc:
+        log.error("Не удалось получить игры пользователя %s: %s", author_id, exc, exc_info=True)
+        return []
+    return _fetch_game_payloads(game_ids)
+
+
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _generate_code(length: int = 6) -> str:
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(length))
+
+
+def create_login_code(
+    user_id: int,
+    chat_id: Optional[int],
+    username: Optional[str] = None,
+    display_name: Optional[str] = None,
+    length: int = 6,
+) -> str:
+    attempts = 0
+    while attempts < 5:
+        code = _generate_code(length)
+        key = f"{LOGIN_CODE_PREFIX}{code}"
+        payload = {
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "username": username,
+            "display_name": display_name,
+            "issued_at": time.time(),
+        }
+        try:
+            if redis_client.setnx(key, json.dumps(payload, ensure_ascii=False)):
+                redis_client.expire(key, LOGIN_CODE_TTL_SECONDS)
+                return code
+        except Exception as exc:
+            log.error("Не удалось сохранить код входа: %s", exc, exc_info=True)
+            raise
+        attempts += 1
+    raise RuntimeError("Не удалось сгенерировать уникальный код входа.")
+
+
+def consume_login_code(code: str) -> Optional[Dict[str, Any]]:
+    key = f"{LOGIN_CODE_PREFIX}{code.strip().upper()}"
+    try:
+        with redis_client.pipeline() as pipe:
+            pipe.get(key)
+            pipe.delete(key)
+            result, _ = pipe.execute()
+    except Exception as exc:
+        log.error("Не удалось прочитать код входа %s: %s", code, exc, exc_info=True)
+        return None
+    if not result:
+        return None
+    try:
+        decoded: Dict[str, Any] = json.loads(result)
+    except json.JSONDecodeError:
+        log.warning("Некорректный JSON в коде входа %s", code)
         return None
     return decoded
 

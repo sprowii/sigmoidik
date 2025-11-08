@@ -1,5 +1,6 @@
 # Copyright (c) 2025 sprouee
 import os
+import secrets
 from typing import List
 
 from dotenv import load_dotenv
@@ -66,8 +67,16 @@ FLASK_PORT = int(os.getenv("PORT", 10000))
 
 GAME_CODE_PREFIX = "games:"
 GAME_TTL_SECONDS = int(os.getenv("GAME_TTL_SECONDS", 7 * 24 * 3600))
+GAME_LIST_KEY = "games:list"
+GAMES_BY_AUTHOR_PREFIX = "games:author:"
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL")
 if WEBAPP_BASE_URL and WEBAPP_BASE_URL.endswith("/"):
     WEBAPP_BASE_URL = WEBAPP_BASE_URL[:-1]
+
+LOGIN_CODE_PREFIX = "login_codes:"
+LOGIN_CODE_TTL_SECONDS = int(os.getenv("LOGIN_CODE_TTL_SECONDS", 10 * 60))
+
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "sig_session")
 
 
