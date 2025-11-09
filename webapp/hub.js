@@ -410,7 +410,7 @@ async function handleGeneratorSubmit(event) {
         const data = await response.json();
         const game = data.game;
         elements.generatorTextarea.value = "";
-        const link = game && game.share_url ? `<a href="${game.share_url}" target="_blank" rel="noopener">Открыть игру</a>` : "";
+        const link = game && game.share_url ? `<a href="${game.share_url}">Открыть игру</a>` : "";
         setGenerating(false, `Готово! ${game?.title || "Новая игра"}. ${link}`, "success");
         await loadGames({ reset: true });
     } catch (error) {
