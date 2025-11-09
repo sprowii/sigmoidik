@@ -56,6 +56,7 @@ def build_application(token: str, bot_username: str):
         "set_interval": handlers.set_interval,
         "set_minmsgs": handlers.set_minmsgs,
         "set_msgsize": handlers.set_msgsize,
+        "set_draw_model": handlers.set_draw_model,
     }
     for command, callback in command_handlers.items():
         app.add_handler(CommandHandler(command, callback))

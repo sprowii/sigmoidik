@@ -84,6 +84,15 @@ LLM_PROVIDER_ORDER: List[str] = [
 
 POLLINATIONS_ENABLED = os.getenv("POLLINATIONS_ENABLED", "false").lower() in {"1", "true", "yes"}
 POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "flux")
+_pollinations_models_raw = os.getenv("POLLINATIONS_MODELS")
+if _pollinations_models_raw:
+    POLLINATIONS_MODELS: List[str] = [
+        model.strip()
+        for model in _pollinations_models_raw.split(",")
+        if model.strip()
+    ]
+else:
+    POLLINATIONS_MODELS = [POLLINATIONS_MODEL]
 POLLINATIONS_WIDTH = int(os.getenv("POLLINATIONS_WIDTH", "1024"))
 POLLINATIONS_HEIGHT = int(os.getenv("POLLINATIONS_HEIGHT", "1024"))
 POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://pollinations.ai")

@@ -582,10 +582,10 @@ def llm_request(chat_id: int, prompt_parts: List[Any]) -> Tuple[Optional[str], s
     raise Exception("All providers failed")
 
 
-def llm_generate_image(prompt: str) -> Tuple[Optional[bytes], str]:
+def llm_generate_image(prompt: str, pollinations_model: Optional[str] = None) -> Tuple[Optional[bytes], str]:
     global current_key_idx
     if POLLINATIONS_ENABLED:
-        image_bytes, provider = _generate_image_via_pollinations(prompt)
+        image_bytes, provider = _generate_image_via_pollinations(prompt, pollinations_model)
         if image_bytes:
             return image_bytes, provider
 
@@ -603,14 +603,15 @@ def llm_generate_image(prompt: str) -> Tuple[Optional[bytes], str]:
     return None, model_name
 
 
-def _generate_image_via_pollinations(prompt: str) -> Tuple[Optional[bytes], str]:
+def _generate_image_via_pollinations(prompt: str, model_override: Optional[str] = None) -> Tuple[Optional[bytes], str]:
     seed_value = POLLINATIONS_SEED or str(random.randint(0, 1_000_000_000))
     encoded_prompt = urllib.parse.quote_plus(prompt)
+    model_name = model_override or POLLINATIONS_MODEL
     params = {
         "width": str(POLLINATIONS_WIDTH),
         "height": str(POLLINATIONS_HEIGHT),
         "seed": seed_value,
-        "model": POLLINATIONS_MODEL,
+        "model": model_name,
     }
     query = "&".join(f"{key}={urllib.parse.quote_plus(value)}" for key, value in params.items())
     url = f"{POLLINATIONS_BASE_URL.rstrip('/')}/p/{encoded_prompt}?{query}"
@@ -618,13 +619,13 @@ def _generate_image_via_pollinations(prompt: str) -> Tuple[Optional[bytes], str]
         response = requests.get(url, timeout=POLLINATIONS_TIMEOUT)
         response.raise_for_status()
         if response.content:
-            provider_name = f"pollinations:{POLLINATIONS_MODEL}"
+            provider_name = f"pollinations:{model_name}"
             log.info("Generated image via Pollinations (%s)", provider_name)
             return response.content, provider_name
         log.warning("Pollinations returned empty image content for prompt: %s", prompt)
     except Exception as exc:
         log.warning("Pollinations image generation failed: %s", exc)
-    return None, f"pollinations:{POLLINATIONS_MODEL}"
+    return None, f"pollinations:{model_name}"
 
 
 def _generate_image_via_gemini(client: genai.Client, model_name: str, prompt: str) -> Optional[bytes]:
@@ -684,9 +685,9 @@ def check_available_models() -> List[str]:
                 )
                 text = _extract_text_from_parts(_response_parts(response))
                 if text:
-                working_models.append(model_name)
+                    working_models.append(model_name)
                     log.info("Model %s is available with key #%s", model_name, key_idx + 1)
-                break
+                    break
             except Exception:
                 continue
     if working_models:

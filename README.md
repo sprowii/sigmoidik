@@ -55,6 +55,9 @@ OPENROUTER_MODELS=deepseek/deepseek-chat-v3-0324:free,deepseek/deepseek-r1-0528:
 OPENROUTER_SITE_URL=https://example.com
 OPENROUTER_SITE_NAME=Sigmoida
 LLM_PROVIDER_ORDER=gemini,openrouter
+# Опционально: Pollinations
+POLLINATIONS_MODEL=flux
+POLLINATIONS_MODELS=flux,flux-realistic,flux-anime
 ```
 
 4. Запусти:
@@ -73,6 +76,7 @@ python сигмоида.py
 - `/start` — запустить бота
 - `/help` — справка по командам
 - `/draw описание` — нарисовать картинку
+- `/set_draw_model название` — выбрать модель Pollinations для /draw и автогенерации
 - `/game идея` — создать игру на Phaser
 - `/login` — получить код для входа на сайт
 - `/reset` — очистить историю
