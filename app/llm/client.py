@@ -520,10 +520,10 @@ def _summarize_history(chat_id: int) -> None:
 
     for provider in _provider_sequence():
         try:
-            if provider == "gemini":
-                result = _send_gemini_request([], summary_message)
-            elif provider == "openrouter":
+            if provider == "openrouter":
                 result = _send_openrouter_request([], summary_message)
+            elif provider == "gemini":
+                result = _send_gemini_request([], summary_message)
             else:
                 continue
 
@@ -557,7 +557,7 @@ def llm_request(chat_id: int, prompt_parts: List[Any]) -> Tuple[Optional[str], s
             result = _send_gemini_request(stored_history, user_message)
         elif provider == "openrouter":
             result = _send_openrouter_request(stored_history, user_message)
-        else:
+                else:
             result = None
 
         if not result:
@@ -681,9 +681,9 @@ def check_available_models() -> List[str]:
                 )
                 text = _extract_text_from_parts(_response_parts(response))
                 if text:
-                    working_models.append(model_name)
+                working_models.append(model_name)
                     log.info("Model %s is available with key #%s", model_name, key_idx + 1)
-                    break
+                break
             except Exception:
                 continue
     if working_models:
