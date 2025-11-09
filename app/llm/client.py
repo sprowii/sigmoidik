@@ -118,15 +118,10 @@ def llm_generate_image(prompt: str) -> Tuple[Optional[bytes], str]:
         key_idx = (current_key_idx + key_try) % len(API_KEYS)
         try:
             genai.configure(api_key=API_KEYS[key_idx])
-            model = genai.ImageGenerationModel(model_name=model_name)
-            response = model.generate_images(prompt=prompt)
-            if response.images:
+            image_bytes = _generate_image_via_gemini(model_name, prompt)
+            if image_bytes:
                 current_key_idx = key_idx
-                image = response.images[0]
-                image_bytes = getattr(image, "image_bytes", None) or getattr(image, "data", None)
-                if image_bytes:
-                    return image_bytes, model_name
-                log.warning("Image generation returned empty data on key %s", key_idx + 1)
+                return image_bytes, model_name
         except Exception as exc:
             log.warning(f"Image generation failed on key {key_idx + 1}: {exc}")
     return None, model_name
@@ -159,6 +154,31 @@ def _generate_image_via_pollinations(prompt: str) -> Tuple[Optional[bytes], str]
     except Exception as exc:
         log.warning("Pollinations image generation failed: %s", exc)
     return None, f"pollinations:{POLLINATIONS_MODEL}"
+
+
+def _generate_image_via_gemini(model_name: str, prompt: str) -> Optional[bytes]:
+    image_model_cls = getattr(genai, "ImageGenerationModel", None)
+    if image_model_cls is not None:
+        model = image_model_cls(model_name=model_name)
+        response = model.generate_images(prompt=prompt)
+        images = getattr(response, "images", None)
+        if images:
+            first_image = images[0]
+            return getattr(first_image, "image_bytes", None) or getattr(first_image, "data", None)
+        return None
+
+    # Fallback for SDKs без ImageGenerationModel
+    model = genai.GenerativeModel(model_name=model_name)
+    response = model.generate_content(
+        prompt,
+        generation_config={"response_mime_type": "image/png"},
+    )
+    parts = getattr(response, "parts", None) or []
+    for part in parts:
+        inline = getattr(part, "inline_data", None)
+        if inline and getattr(inline, "data", None):
+            return inline.data
+    return None
 
 
 def check_available_models() -> List[str]:
