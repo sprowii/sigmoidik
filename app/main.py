@@ -62,7 +62,6 @@ def build_application(token: str, bot_username: str):
     }
     for command, callback in command_handlers.items():
         app.add_handler(CommandHandler(command, callback))
-        app.add_handler(CommandHandler(f"{command}_{bot_username}", callback))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_text_and_photo))
     app.add_handler(MessageHandler(filters.PHOTO, handlers.handle_text_and_photo))
