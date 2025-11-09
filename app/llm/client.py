@@ -560,7 +560,7 @@ def llm_request(chat_id: int, prompt_parts: List[Any]) -> Tuple[Optional[str], s
             result = _send_gemini_request(stored_history, user_message)
         elif provider == "openrouter":
             result = _send_openrouter_request(stored_history, user_message)
-                else:
+        else:
             result = None
 
         if not result:
