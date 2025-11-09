@@ -681,9 +681,9 @@ def check_available_models() -> List[str]:
                 )
                 text = _extract_text_from_parts(_response_parts(response))
                 if text:
-                working_models.append(model_name)
-                    log.info(f"Model {model_name} is available with key #{key_idx + 1}")
-                break
+                    working_models.append(model_name)
+                    log.info("Model %s is available with key #%s", model_name, key_idx + 1)
+                    break
             except Exception:
                 continue
     if working_models:
