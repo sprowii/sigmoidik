@@ -78,14 +78,67 @@ OPENROUTER_MODELS: List[str] = [
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
 OPENROUTER_SITE_NAME = os.getenv("OPENROUTER_SITE_NAME")
 OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "45"))
+
 LLM_PROVIDER_ORDER: List[str] = [
     provider.strip().lower()
-    for provider in os.getenv("LLM_PROVIDER_ORDER", "openrouter,gemini,pollinations").split(",")
+    for provider in os.getenv("LLM_PROVIDER_ORDER", "gemini,openrouter,pollinations").split(",")
     if provider.strip()
 ]
 
-POLLINATIONS_ENABLED = os.getenv("POLLINATIONS_ENABLED", "false").lower() in {"1", "true", "yes"}
+# ============================================================================
+# POLLINATIONS CONFIGURATION
+# ============================================================================
+
+# Безопасные модели для Telegram
+POLLINATIONS_SAFE_MODELS = {
+    "openai": "GPT-5 Nano",
+    "openai-fast": "GPT-4.1 Nano (Fast)",
+    "openai-large": "GPT-4.1 (Advanced)",
+    "openai-reasoning": "o4 Mini (Reasoning)",
+    "deepseek": "DeepSeek V3.1 (Reasoning)",
+    "gemini": "Gemini 2.5 Flash Lite",
+    "gemini-search": "Gemini 2.5 + Google Search",
+    "mistral": "Mistral Small 3.2 24B",
+    "bidara": "NASA BIDARA",
+    "chickytutor": "ChickyTutor",
+    "rtist": "Rtist",
+}
+
+# Authentication (опционально, но рекомендуется для лучших лимитов)
+POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY")
+
+# Text Generation
+POLLINATIONS_TEXT_BASE_URL = os.getenv(
+    "POLLINATIONS_TEXT_BASE_URL", 
+    "https://text.pollinations.ai/openai"
+)
+
+POLLINATIONS_TEXT_MODELS: List[str] = [
+    model.strip()
+    for model in os.getenv(
+        "POLLINATIONS_TEXT_MODELS",
+        "gemini-search,deepseek,openai,mistral",
+    ).split(",")
+    if model.strip() and model.strip() in POLLINATIONS_SAFE_MODELS
+]
+
+if not POLLINATIONS_TEXT_MODELS:
+    POLLINATIONS_TEXT_MODELS = ["openai"]
+
+POLLINATIONS_TEXT_DEFAULT = os.getenv("POLLINATIONS_TEXT_DEFAULT", "gemini-search")
+
+if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_SAFE_MODELS:
+    POLLINATIONS_TEXT_DEFAULT = "openai"
+
+if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_MODELS:
+    POLLINATIONS_TEXT_DEFAULT = POLLINATIONS_TEXT_MODELS[0]
+
+POLLINATIONS_TEXT_TIMEOUT = float(os.getenv("POLLINATIONS_TEXT_TIMEOUT", "60"))
+
+# Image Generation
+POLLINATIONS_ENABLED = os.getenv("POLLINATIONS_ENABLED", "true").lower() in {"1", "true", "yes"}
 POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "flux")
+
 _pollinations_models_raw = os.getenv("POLLINATIONS_MODELS")
 if _pollinations_models_raw:
     POLLINATIONS_MODELS: List[str] = [
@@ -95,29 +148,18 @@ if _pollinations_models_raw:
     ]
 else:
     POLLINATIONS_MODELS = [POLLINATIONS_MODEL]
+
 POLLINATIONS_WIDTH = int(os.getenv("POLLINATIONS_WIDTH", "1024"))
 POLLINATIONS_HEIGHT = int(os.getenv("POLLINATIONS_HEIGHT", "1024"))
-POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://pollinations.ai")
+POLLINATIONS_BASE_URL = os.getenv("POLLINATIONS_BASE_URL", "https://image.pollinations.ai")
 POLLINATIONS_SEED = os.getenv("POLLINATIONS_SEED")
-POLLINATIONS_TIMEOUT = float(os.getenv("POLLINATIONS_TIMEOUT", "30"))
-POLLINATIONS_TEXT_BASE_URL = os.getenv("POLLINATIONS_TEXT_BASE_URL", "https://text.pollinations.ai/openai")
-POLLINATIONS_TEXT_MODELS: List[str] = [
-    model.strip()
-    for model in os.getenv(
-        "POLLINATIONS_TEXT_MODELS",
-        "openai,mistral,searchgpt,roblox,roblox-rp",
-    ).split(",")
-    if model.strip()
-]
-if not POLLINATIONS_TEXT_MODELS:
-    POLLINATIONS_TEXT_MODELS = ["openai"]
-POLLINATIONS_TEXT_DEFAULT = os.getenv("POLLINATIONS_TEXT_DEFAULT", "mistral")
-if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_TEXT_MODELS:
-    POLLINATIONS_TEXT_DEFAULT = POLLINATIONS_TEXT_MODELS[0]
-POLLINATIONS_TEXT_TIMEOUT = float(os.getenv("POLLINATIONS_TEXT_TIMEOUT", "45"))
+POLLINATIONS_TIMEOUT = float(os.getenv("POLLINATIONS_TIMEOUT", "300"))
+POLLINATIONS_SAFE_MODE = os.getenv("POLLINATIONS_SAFE_MODE", "true").lower() in {"1", "true", "yes"}
+
+# ============================================================================
 
 MAX_HISTORY = 10
-MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB предел на сохранение изображений
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 BOT_PERSONA_PROMPT = """
 Ты — умный и полезный ассистент по имени Сигмоида.
@@ -148,13 +190,13 @@ LOGIN_CODE_TTL_SECONDS = int(os.getenv("LOGIN_CODE_TTL_SECONDS", 10 * 60))
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "sig_session")
 
-# Диагностика ключей
+# Диагностика
 log.info(f"Loaded {len(API_KEYS)} Gemini API keys")
 log.info(f"Loaded {len(OPENROUTER_API_KEYS)} OpenRouter API keys")
 log.info(f"Pollinations enabled: {POLLINATIONS_ENABLED}")
+log.info(f"Pollinations authenticated: {bool(POLLINATIONS_API_KEY)}")
+log.info(f"Pollinations safe mode: {POLLINATIONS_SAFE_MODE}")
 log.info(f"LLM provider order: {LLM_PROVIDER_ORDER}")
 log.info(f"Gemini models: {MODELS}")
 log.info(f"OpenRouter models: {OPENROUTER_MODELS}")
 log.info(f"Pollinations text models: {POLLINATIONS_TEXT_MODELS}, default: {POLLINATIONS_TEXT_DEFAULT}")
-
-

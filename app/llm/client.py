@@ -21,10 +21,12 @@ from app.config import (
     OPENROUTER_SITE_NAME,
     OPENROUTER_SITE_URL,
     OPENROUTER_TIMEOUT,
+    POLLINATIONS_API_KEY,
     POLLINATIONS_BASE_URL,
     POLLINATIONS_ENABLED,
     POLLINATIONS_HEIGHT,
     POLLINATIONS_MODEL,
+    POLLINATIONS_SAFE_MODE,
     POLLINATIONS_SEED,
     POLLINATIONS_TEXT_BASE_URL,
     POLLINATIONS_TEXT_DEFAULT,
@@ -36,7 +38,6 @@ from app.config import (
 from app.logging_config import log
 from app.state import configs, history
 
-# Global state variables
 current_key_idx = 0
 current_model_idx = 0
 available_models: List[str] = GEMINI_MODELS.copy()
@@ -46,14 +47,12 @@ _clients: Dict[int, genai.Client] = {}
 current_or_key_idx = 0
 current_or_model_idx = 0
 
-# Constants
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 SERVICE_UNAVAILABLE_DELAY = 2.0
-MODEL_CHECK_INTERVAL = 3600.0  # Check models every hour
+MODEL_CHECK_INTERVAL = 3600.0
 
 
 def _get_client(idx: int) -> genai.Client:
-    """Get or create a Gemini client for the given API key index."""
     if not API_KEYS:
         raise RuntimeError("Не заданы API ключи для Gemini")
     idx = idx % len(API_KEYS)
@@ -63,7 +62,6 @@ def _get_client(idx: int) -> genai.Client:
 
 
 def _normalize_provider_name(value: Optional[str]) -> Optional[str]:
-    """Normalize provider name to standard format."""
     if not value:
         return None
     normalized = value.strip().lower()
@@ -74,12 +72,11 @@ def _normalize_provider_name(value: Optional[str]) -> Optional[str]:
     if normalized == "openrouter":
         return "openrouter" if OPENROUTER_API_KEYS and OPENROUTER_MODELS else None
     if normalized == "pollinations":
-        return "pollinations" if POLLINATIONS_TEXT_MODELS else None
+        return "pollinations" if POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL else None
     return None
 
 
 def _provider_sequence(preferred: Optional[str] = None) -> List[str]:
-    """Generate provider sequence based on preference and availability."""
     normalized_preferred = _normalize_provider_name(preferred)
     ordered_config = [
         provider for provider in LLM_PROVIDER_ORDER 
@@ -99,23 +96,21 @@ def _provider_sequence(preferred: Optional[str] = None) -> List[str]:
             sequence.append("gemini")
         elif provider == "openrouter" and OPENROUTER_API_KEYS and OPENROUTER_MODELS:
             sequence.append("openrouter")
-        elif provider == "pollinations" and POLLINATIONS_TEXT_MODELS:
+        elif provider == "pollinations" and POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL:
             sequence.append("pollinations")
     
-    # Fallback if no sequence
     if not sequence:
         if API_KEYS:
             sequence.append("gemini")
         if OPENROUTER_API_KEYS and OPENROUTER_MODELS:
             sequence.append("openrouter")
-        if POLLINATIONS_TEXT_MODELS:
+        if POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL:
             sequence.append("pollinations")
     
     return sequence
 
 
 def _parts_to_text(parts: List[Dict[str, Any]]) -> str:
-    """Extract text from message parts."""
     texts: List[str] = []
     for part in parts:
         if isinstance(part, dict):
@@ -126,7 +121,6 @@ def _parts_to_text(parts: List[Dict[str, Any]]) -> str:
 
 
 def _message_has_inline_data(parts: List[Dict[str, Any]]) -> bool:
-    """Check if message contains inline data (images, etc)."""
     for part in parts:
         if isinstance(part, dict) and ("inline_data" in part or "inlineData" in part):
             return True
@@ -134,7 +128,6 @@ def _message_has_inline_data(parts: List[Dict[str, Any]]) -> bool:
 
 
 def _chat_provider_preference(chat_id: Optional[int], override: Optional[str] = None) -> Optional[str]:
-    """Get provider preference for a chat."""
     candidate = _normalize_provider_name(override)
     if candidate:
         return candidate
@@ -146,8 +139,7 @@ def _chat_provider_preference(chat_id: Optional[int], override: Optional[str] = 
     return None
 
 
-def _can_use_openrouter_message(message: Dict[str, Any]) -> bool:
-    """Check if message can be used with OpenRouter (text-only)."""
+def _can_use_text_only_provider(message: Dict[str, Any]) -> bool:
     parts = message.get("parts", [])
     if _message_has_inline_data(parts):
         return False
@@ -155,12 +147,12 @@ def _can_use_openrouter_message(message: Dict[str, Any]) -> bool:
     return bool(text.strip())
 
 
-def _prepare_openrouter_messages(
+def _prepare_openai_compatible_messages(
     stored_history: List[Dict[str, Any]],
     user_text: str,
 ) -> List[Dict[str, str]]:
-    """Prepare messages for OpenRouter API."""
     messages: List[Dict[str, str]] = []
+    
     if BOT_PERSONA_PROMPT:
         messages.append({"role": "system", "content": BOT_PERSONA_PROMPT})
     
@@ -183,20 +175,21 @@ def _prepare_openrouter_messages(
 
 
 def _pollinations_text_model_for_chat(chat_id: Optional[int]) -> str:
-    """Get Pollinations model for a specific chat."""
     if not POLLINATIONS_TEXT_MODELS:
         return "openai"
+    
     if chat_id is not None:
         cfg = configs.get(chat_id)
         if cfg and getattr(cfg, "pollinations_text_model", None) in POLLINATIONS_TEXT_MODELS:
             return cfg.pollinations_text_model
-    if POLLINATIONS_TEXT_DEFAULT in POLLINATIONS_TEXT_MODELS:
+    
+    if POLLINATIONS_TEXT_DEFAULT and POLLINATIONS_TEXT_DEFAULT in POLLINATIONS_TEXT_MODELS:
         return POLLINATIONS_TEXT_DEFAULT
+    
     return POLLINATIONS_TEXT_MODELS[0]
 
 
-def _openrouter_content_to_text(content: Any) -> str:
-    """Extract text from OpenRouter content."""
+def _openai_content_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
@@ -213,19 +206,16 @@ def _openrouter_content_to_text(content: Any) -> str:
 
 
 def _is_service_unavailable_error(exc: Exception) -> bool:
-    """Check if error is service unavailable."""
     text = str(exc).lower()
     return "503" in text or "service unavailable" in text
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if error is rate limit."""
     text = str(exc).lower()
     return "rate limit" in text or "429" in text or "quota" in text
 
 
 def _to_base64(data: Any) -> str:
-    """Convert data to base64 string."""
     if data is None:
         return ""
     if isinstance(data, str):
@@ -240,7 +230,6 @@ def _to_base64(data: Any) -> str:
 
 
 def _from_base64_maybe(data: Any) -> Any:
-    """Try to decode from base64 if possible."""
     if isinstance(data, (bytes, bytearray)):
         return bytes(data)
     if isinstance(data, str):
@@ -252,7 +241,6 @@ def _from_base64_maybe(data: Any) -> Any:
 
 
 def _normalize_prompt_parts(prompt_parts: List[Any]) -> Dict[str, Any]:
-    """Normalize prompt parts to standard format."""
     normalized: List[Dict[str, Any]] = []
     for part in prompt_parts:
         if isinstance(part, dict) and "inline_data" in part:
@@ -273,9 +261,9 @@ def _normalize_prompt_parts(prompt_parts: List[Any]) -> Dict[str, Any]:
 
 
 def _api_part(part: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert part to API format."""
     if "text" in part and part["text"] is not None:
         return {"text": str(part["text"])}
+    
     if "function_call" in part:
         fn = part["function_call"]
         if not fn or not fn.get("name"):
@@ -286,10 +274,12 @@ def _api_part(part: Dict[str, Any]) -> Dict[str, Any]:
                 "args": fn.get("args", {}),
             }
         }
+    
     if "functionCall" in part:
         if not part["functionCall"] or not part["functionCall"].get("name"):
             return {}
         return part
+    
     if "inline_data" in part:
         inline = part["inline_data"]
         return {
@@ -298,6 +288,7 @@ def _api_part(part: Dict[str, Any]) -> Dict[str, Any]:
                 "data": _to_base64(inline.get("data")),
             }
         }
+    
     if "inlineData" in part:
         return {
             "inlineData": {
@@ -305,11 +296,11 @@ def _api_part(part: Dict[str, Any]) -> Dict[str, Any]:
                 "data": _to_base64(part["inlineData"].get("data")),
             }
         }
+    
     return {"text": str(part)}
 
 
 def _api_content(message: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert message to API content format."""
     formatted_parts: List[Dict[str, Any]] = []
     for raw_part in message.get("parts", []):
         mapped = _api_part(raw_part)
@@ -322,7 +313,6 @@ def _api_content(message: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _part_from_any(part: Any) -> Dict[str, Any]:
-    """Convert any part type to standard format."""
     if hasattr(part, "function_call"):
         function_call = part.function_call
         args = getattr(function_call, "args", {}) or {}
@@ -382,7 +372,6 @@ def _part_from_any(part: Any) -> Dict[str, Any]:
 
 
 def _response_parts(response: Any) -> List[Dict[str, Any]]:
-    """Extract parts from response."""
     candidates = getattr(response, "candidates", None)
     if not candidates and isinstance(response, dict):
         candidates = response.get("candidates")
@@ -412,13 +401,11 @@ def _response_parts(response: Any) -> List[Dict[str, Any]]:
 
 
 def _extract_text_from_parts(parts: List[Dict[str, Any]]) -> str:
-    """Extract text from parts list."""
     texts = [part["text"] for part in parts if isinstance(part, dict) and part.get("text")]
     return "\n".join(texts).strip()
 
 
 def _extract_function_call(parts: List[Dict[str, Any]]) -> Optional[SimpleNamespace]:
-    """Extract function call from parts."""
     for part in parts:
         fn = part.get("function_call")
         if isinstance(fn, dict):
@@ -433,7 +420,6 @@ def _extract_function_call(parts: List[Dict[str, Any]]) -> Optional[SimpleNamesp
 
 
 def _history_to_text(chat_history: List[Dict[str, Any]]) -> str:
-    """Convert history to text format."""
     lines: List[str] = []
     for message in chat_history:
         role = message.get("role", "user")
@@ -448,7 +434,6 @@ def _history_to_text(chat_history: List[Dict[str, Any]]) -> str:
 
 
 def _request_config() -> Dict[str, Any]:
-    """Generate request configuration."""
     config: Dict[str, Any] = {}
     
     if BOT_PERSONA_PROMPT:
@@ -482,7 +467,6 @@ def _send_gemini_request(
     stored_history: List[Dict[str, Any]],
     user_message: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """Send request to Gemini API."""
     log.info("Attempting Gemini request")
     global current_key_idx, current_model_idx
 
@@ -546,7 +530,6 @@ def _send_openrouter_request(
     stored_history: List[Dict[str, Any]],
     user_message: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """Send request to OpenRouter API."""
     log.info("Attempting OpenRouter request")
     global current_or_key_idx, current_or_model_idx
 
@@ -554,12 +537,12 @@ def _send_openrouter_request(
         log.warning("No OpenRouter API keys or models available")
         return None
     
-    if not _can_use_openrouter_message(user_message):
+    if not _can_use_text_only_provider(user_message):
         log.info("Message contains non-text content, skipping OpenRouter")
         return None
 
     user_text = _parts_to_text(user_message.get("parts", []))
-    messages = _prepare_openrouter_messages(stored_history, user_text)
+    messages = _prepare_openai_compatible_messages(stored_history, user_text)
 
     for model_offset in range(len(OPENROUTER_MODELS)):
         model_idx = (current_or_model_idx + model_offset) % len(OPENROUTER_MODELS)
@@ -607,7 +590,7 @@ def _send_openrouter_request(
                     raise ValueError("OpenRouter response contains no choices")
                 
                 message = choices[0].get("message") or {}
-                reply_text = _openrouter_content_to_text(message.get("content"))
+                reply_text = _openai_content_to_text(message.get("content"))
                 
                 if not reply_text:
                     raise ValueError("OpenRouter response has empty content")
@@ -638,14 +621,13 @@ def _send_pollinations_request(
     stored_history: List[Dict[str, Any]],
     user_message: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """Send request to Pollinations API."""
     log.info("Attempting Pollinations request")
     
     if not POLLINATIONS_TEXT_MODELS or not POLLINATIONS_TEXT_BASE_URL:
         log.warning("Pollinations not configured properly")
         return None
     
-    if not _can_use_openrouter_message(user_message):
+    if not _can_use_text_only_provider(user_message):
         log.info("Message contains non-text content, skipping Pollinations")
         return None
 
@@ -656,20 +638,25 @@ def _send_pollinations_request(
     log.info(f"Using Pollinations model: {model_name}")
 
     user_text = _parts_to_text(user_message.get("parts", []))
-    messages = _prepare_openrouter_messages(stored_history, user_text)
+    messages = _prepare_openai_compatible_messages(stored_history, user_text)
     
     payload = {
         "model": model_name,
         "messages": messages,
-        "temperature": 1.0,
-        "reasoning_effort": "medium",
     }
+    
+    headers = {"Content-Type": "application/json"}
+    
+    if POLLINATIONS_API_KEY:
+        headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
+        log.debug("Using Pollinations API key for authenticated request")
 
     try:
-        log.debug(f"Sending Pollinations request with payload: {payload}")
+        log.debug(f"Sending Pollinations request to {POLLINATIONS_TEXT_BASE_URL}")
         response = requests.post(
             POLLINATIONS_TEXT_BASE_URL,
             json=payload,
+            headers=headers,
             timeout=POLLINATIONS_TEXT_TIMEOUT,
         )
         
@@ -685,23 +672,18 @@ def _send_pollinations_request(
             return None
         
         response.raise_for_status()
-        reply_text: Optional[str] = None
-
-        if "application/json" in response.headers.get("Content-Type", ""):
-            data = response.json()
-            choices = data.get("choices") or []
-            if choices:
-                message = choices[0].get("message") or {}
-                content = message.get("content")
-                reply_text = _openrouter_content_to_text(content)
-            else:
-                reply_text = (data.get("text") or "").strip()
+        
+        data = response.json()
+        choices = data.get("choices") or []
+        
+        if not choices:
+            raise ValueError("Pollinations response contains no choices")
+        
+        message = choices[0].get("message") or {}
+        reply_text = _openai_content_to_text(message.get("content"))
         
         if not reply_text:
-            reply_text = response.text.strip()
-
-        if not reply_text:
-            raise ValueError("Pollinations response is empty")
+            raise ValueError("Pollinations response has empty content")
 
         return {
             "parts": [{"text": reply_text}],
@@ -715,12 +697,13 @@ def _send_pollinations_request(
         log.warning("Pollinations request failed (model %s): %s", model_name, exc)
     except ValueError as exc:
         log.warning("Pollinations response error (model %s): %s", model_name, exc)
+    except Exception as exc:
+        log.error("Unexpected Pollinations error (model %s): %s", model_name, exc)
     
     return None
 
 
 def _summarize_history(chat_id: int, provider_override: Optional[str] = None) -> None:
-    """Summarize chat history if it exceeds max length."""
     chat_history = history.get(chat_id, [])
     if len(chat_history) <= MAX_HISTORY:
         return
@@ -744,10 +727,10 @@ def _summarize_history(chat_id: int, provider_override: Optional[str] = None) ->
     for provider in providers:
         try:
             result = None
-            if provider == "openrouter":
-                result = _send_openrouter_request([], summary_message)
-            elif provider == "gemini":
+            if provider == "gemini":
                 result = _send_gemini_request([], summary_message)
+            elif provider == "openrouter":
+                result = _send_openrouter_request([], summary_message)
             elif provider == "pollinations":
                 result = _send_pollinations_request(chat_id, [], summary_message)
 
@@ -773,7 +756,6 @@ def llm_request(
     prompt_parts: List[Any], 
     provider_override: Optional[str] = None
 ) -> Tuple[Optional[str], str, Optional[Any]]:
-    """Main LLM request function."""
     preferred_provider = _chat_provider_preference(chat_id, provider_override)
     _summarize_history(chat_id, provider_override)
     stored_history = history.get(chat_id, [])
@@ -786,12 +768,16 @@ def llm_request(
         log.info(f"Trying provider: {provider}")
         
         result = None
-        if provider == "gemini":
-            result = _send_gemini_request(stored_history, user_message)
-        elif provider == "openrouter":
-            result = _send_openrouter_request(stored_history, user_message)
-        elif provider == "pollinations":
-            result = _send_pollinations_request(chat_id, stored_history, user_message)
+        try:
+            if provider == "gemini":
+                result = _send_gemini_request(stored_history, user_message)
+            elif provider == "openrouter":
+                result = _send_openrouter_request(stored_history, user_message)
+            elif provider == "pollinations":
+                result = _send_pollinations_request(chat_id, stored_history, user_message)
+        except Exception as exc:
+            log.error(f"Provider {provider} raised exception: {exc}")
+            continue
         
         if result:
             parts = result.get("parts") or []
@@ -799,7 +785,6 @@ def llm_request(
             fn_call = result.get("fn_call")
             model_name = result.get("model_name", provider)
 
-            # Update history
             new_history = stored_history + [user_message]
             if parts:
                 new_history.append({"role": "model", "parts": parts})
@@ -812,16 +797,13 @@ def llm_request(
 
 
 def llm_generate_image(prompt: str, pollinations_model: Optional[str] = None) -> Tuple[Optional[bytes], str]:
-    """Generate image using available providers."""
     global current_key_idx
     
-    # Try Pollinations first if enabled
-    if POLLINATIONS_ENABLED:
+    if POLLINATIONS_ENABLED and POLLINATIONS_BASE_URL:
         image_bytes, provider = _generate_image_via_pollinations(prompt, pollinations_model)
         if image_bytes:
             return image_bytes, provider
 
-    # Fallback to Gemini
     if not API_KEYS:
         log.warning("No API keys available for Gemini image generation")
         return None, "gemini"
@@ -845,7 +827,6 @@ def _generate_image_via_pollinations(
     prompt: str, 
     model_override: Optional[str] = None
 ) -> Tuple[Optional[bytes], str]:
-    """Generate image via Pollinations."""
     seed_value = POLLINATIONS_SEED or str(random.randint(0, 1_000_000_000))
     encoded_prompt = urllib.parse.quote_plus(prompt)
     model_name = model_override or POLLINATIONS_MODEL
@@ -857,19 +838,34 @@ def _generate_image_via_pollinations(
         "model": model_name,
     }
     
+    if POLLINATIONS_SAFE_MODE:
+        params["safe"] = "true"
+    
     query = "&".join(f"{key}={urllib.parse.quote_plus(value)}" for key, value in params.items())
-    url = f"{POLLINATIONS_BASE_URL.rstrip('/')}/p/{encoded_prompt}?{query}"
+    url = f"{POLLINATIONS_BASE_URL.rstrip('/')}/prompt/{encoded_prompt}?{query}"
+    
+    headers = {}
+    if POLLINATIONS_API_KEY:
+        headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
+        log.debug("Using Pollinations API key for image generation")
     
     try:
-        response = requests.get(url, timeout=POLLINATIONS_TIMEOUT)
+        log.info(f"Generating {'SAFE ' if POLLINATIONS_SAFE_MODE else ''}image via Pollinations")
+        response = requests.get(
+            url, 
+            headers=headers if headers else None,
+            timeout=POLLINATIONS_TIMEOUT
+        )
         response.raise_for_status()
+        
         if response.content:
-            provider_name = f"pollinations:{model_name}"
-            log.info("Generated image via Pollinations (%s)", provider_name)
+            provider_name = f"pollinations:{model_name}" + (":safe" if POLLINATIONS_SAFE_MODE else "")
+            log.info("Generated image via Pollinations")
             return response.content, provider_name
-        log.warning("Pollinations returned empty image content for prompt: %s", prompt)
+        
+        log.warning("Pollinations returned empty image content")
     except Exception as exc:
-        log.warning("Pollinations image generation failed: %s", exc)
+        log.warning(f"Pollinations image generation failed: {exc}")
     
     return None, f"pollinations:{model_name}"
 
@@ -879,8 +875,6 @@ def _generate_image_via_gemini(
     model_name: str, 
     prompt: str
 ) -> Optional[bytes]:
-    """Generate image via Gemini."""
-    # Try using images API if available
     images_api = getattr(client, "images", None)
     if images_api and hasattr(images_api, "generate"):
         try:
@@ -900,7 +894,6 @@ def _generate_image_via_gemini(
         except Exception as exc:
             log.warning(f"Gemini image generation via images.generate failed: {exc}")
     
-    # Fallback to generate_content with image response
     try:
         generate_config = types.GenerateContentConfig(
             response_modalities=["IMAGE"],
@@ -930,39 +923,43 @@ def _generate_image_via_gemini(
 
 
 def check_available_models() -> List[str]:
-    """Check which Gemini models are available."""
     global available_models, last_model_check_ts
     
     current_time = time.time()
     if current_time - last_model_check_ts < MODEL_CHECK_INTERVAL:
         return available_models
     
-    log.info("Checking available models...")
+    log.info("Checking available Gemini models...")
     working_models: List[str] = []
     
     for model_name in GEMINI_MODELS:
+        model_found = False
         for key_idx in range(len(API_KEYS)):
+            if model_found:
+                break
             try:
                 client = _get_client(key_idx)
                 response = client.models.generate_content(
                     model=model_name,
-                    contents=[{"role": "user", "parts": [{"text": "hi"}]}],
-                    config={"system_instruction": {"parts": [{"text": "You are a helper."}]}}
+                    contents=[{"role": "user", "parts": [{"text": "Reply with OK"}]}],
+                    config={"temperature": 0.1}
                 )
-                text = _extract_text_from_parts(_response_parts(response))
-                if text:
+                
+                if hasattr(response, 'candidates') or hasattr(response, 'text'):
                     working_models.append(model_name)
                     log.info("Model %s is available with key #%s", model_name, key_idx + 1)
-                    break
-            except Exception:
+                    model_found = True
+                    
+            except Exception as e:
+                log.debug(f"Model {model_name} test failed with key #{key_idx + 1}: {e}")
                 continue
     
     if working_models:
         available_models = working_models
         last_model_check_ts = current_time
-        log.info(f"Available models updated: {working_models}")
+        log.info(f"Available Gemini models: {working_models}")
     else:
         available_models = GEMINI_MODELS.copy()
-        log.warning("No models were detected as available, using default list")
+        log.warning("Could not verify models, using all configured models")
     
     return available_models
