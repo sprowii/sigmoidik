@@ -331,67 +331,38 @@ def _api_content(message: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _part_from_any(part: Any) -> Dict[str, Any]:
-    # ПРЕОБРАЗУЕМ В СЛОВАРЬ, ЕСЛИ ЭТО ОБЪЕКТ БИБЛИОТЕКИ
-    if hasattr(part, '_raw_part'):
-        part = part._raw_part
+    """Надежно извлекает данные из любого типа 'части' ответа."""
 
-    if isinstance(part, dict):
-        if "functionCall" in part:
-            fc = part["functionCall"]
-            if not fc or not fc.get("name"):
-                return {}
-            return {"function_call": {"name": fc.get("name"), "args": fc.get("args", {})}}
-        if "function_call" in part:
-            if not part["function_call"] or not part["function_call"].get("name"):
-                return {}
-            return {"function_call": part["function_call"]}
-        if "inlineData" in part:
-            inline = part["inlineData"]
-            return {
-                "inline_data": {
-                    "mime_type": inline.get("mimeType"),
-                    "data": _from_base64_maybe(inline.get("data")),
-                }
-            }
-        if "inline_data" in part:
-            inline = part["inline_data"]
-            return {
-                "inline_data": {
-                    "mime_type": inline.get("mime_type"),
-                    "data": _from_base64_maybe(inline.get("data")),
-                }
-            }
-        if "text" in part:
-            return {"text": part["text"]}
-
-    # Остальная логика без изменений
-    if hasattr(part, "function_call"):
+    # 1. Проверяем на наличие атрибута function_call (самый специфичный)
+    if hasattr(part, 'function_call'):
         function_call = part.function_call
-        args = getattr(function_call, "args", {}) or {}
-        if hasattr(args, "items"):
-            args = dict(args)
-        name = getattr(function_call, "name", "")
-        if not name:
-            return {}
-        return {"function_call": {"name": name, "args": args}}
+        # Проверяем, что это не пустой объект
+        if function_call and hasattr(function_call, 'name') and function_call.name:
+            args = getattr(function_call, "args", {}) or {}
+            if hasattr(args, "items"):
+                args = dict(args)
+            return {"function_call": {"name": function_call.name, "args": args}}
 
-    if hasattr(part, "text"):
-        return {"text": part.text}
+    # 2. Проверяем на наличие атрибута text
+    if hasattr(part, 'text') and part.text is not None:
+        return {"text": str(part.text)}
 
-    if hasattr(part, "inline_data"):
-        inline = part.inline_data
-        return {
-            "inline_data": {
-                "mime_type": getattr(inline, "mime_type", None),
-                "data": _from_base64_maybe(getattr(inline, "data", None)),
-            }
-        }
+    # 3. Обрабатываем случаи, если part уже является словарем (для истории)
+    if isinstance(part, dict):
+        if "function_call" in part:
+            return part # Уже в правильном формате
+        if "text" in part:
+            return part # Уже в правильном формате
+        if "inline_data" in part:
+            return part # Уже в правильном формате
 
+    # 4. Обрабатываем простые типы
     if isinstance(part, str):
         return {"text": part}
-    if isinstance(part, (bytes, bytearray, memoryview)):
-        return {"inline_data": {"mime_type": "application/octet-stream", "data": bytes(part)}}
-    return {"text": str(part)}
+
+    # 5. Если ничего не подошло, возвращаем пустой словарь, чтобы не было мусора
+    log.warning(f"Could not parse part of type {type(part)}: {part}")
+    return {}
 
 
 def _response_parts(response: Any) -> List[Dict[str, Any]]:
