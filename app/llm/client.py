@@ -331,28 +331,10 @@ def _api_content(message: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _part_from_any(part: Any) -> Dict[str, Any]:
-    if hasattr(part, "function_call"):
-        function_call = part.function_call
-        args = getattr(function_call, "args", {}) or {}
-        if hasattr(args, "items"):
-            args = dict(args)
-        name = getattr(function_call, "name", "")
-        if not name:
-            return {}
-        return {"function_call": {"name": name, "args": args}}
-    
-    if hasattr(part, "text"):
-        return {"text": part.text}
-    
-    if hasattr(part, "inline_data"):
-        inline = part.inline_data
-        return {
-            "inline_data": {
-                "mime_type": getattr(inline, "mime_type", None),
-                "data": _from_base64_maybe(getattr(inline, "data", None)),
-            }
-        }
-    
+    # ПРЕОБРАЗУЕМ В СЛОВАРЬ, ЕСЛИ ЭТО ОБЪЕКТ БИБЛИОТЕКИ
+    if hasattr(part, '_raw_part'):
+        part = part._raw_part
+
     if isinstance(part, dict):
         if "functionCall" in part:
             fc = part["functionCall"]
@@ -381,7 +363,30 @@ def _part_from_any(part: Any) -> Dict[str, Any]:
             }
         if "text" in part:
             return {"text": part["text"]}
-    
+
+    # Остальная логика без изменений
+    if hasattr(part, "function_call"):
+        function_call = part.function_call
+        args = getattr(function_call, "args", {}) or {}
+        if hasattr(args, "items"):
+            args = dict(args)
+        name = getattr(function_call, "name", "")
+        if not name:
+            return {}
+        return {"function_call": {"name": name, "args": args}}
+
+    if hasattr(part, "text"):
+        return {"text": part.text}
+
+    if hasattr(part, "inline_data"):
+        inline = part.inline_data
+        return {
+            "inline_data": {
+                "mime_type": getattr(inline, "mime_type", None),
+                "data": _from_base64_maybe(getattr(inline, "data", None)),
+            }
+        }
+
     if isinstance(part, str):
         return {"text": part}
     if isinstance(part, (bytes, bytearray, memoryview)):
@@ -509,7 +514,7 @@ def _send_gemini_request(
                     contents=contents_payload,
                     config=_request_config(),
                 )
-                log.info(f"RAW GEMINI RESPONSE: {response}")
+
                 parts = _response_parts(response)
                 reply_text = _extract_text_from_parts(parts)
                 fn_call = _extract_function_call(parts)
