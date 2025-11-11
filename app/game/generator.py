@@ -1,3 +1,4 @@
+# Copyright (c) 2025 sprouee
 """Utilities that orchestrate AI-driven generation of Phaser games."""
 
 from __future__ import annotations

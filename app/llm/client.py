@@ -1,4 +1,5 @@
-﻿import base64
+﻿# Copyright (c) 2025 sprouee
+import base64
 import random
 import time
 import urllib.parse
@@ -10,8 +11,10 @@ from google.genai import types
 import requests
 
 from app.config import (
+    POLLINATIONS_PRIVATE_IMAGES,
+    POLLINATIONS_NO_LOGO,
     API_KEYS,
-    BOT_PERSONA_PROMPT,
+    BOT_PERSONA_PROMPT, 
     IMAGE_MODEL_NAME,
     LLM_PROVIDER_ORDER,
     MAX_HISTORY,
@@ -31,6 +34,7 @@ from app.config import (
     POLLINATIONS_TEXT_BASE_URL,
     POLLINATIONS_TEXT_DEFAULT,
     POLLINATIONS_TEXT_MODELS,
+    POLLINATIONS_TEXT_TEMPERATURE,
     POLLINATIONS_TEXT_TIMEOUT,
     POLLINATIONS_TIMEOUT,
     POLLINATIONS_WIDTH,
@@ -643,14 +647,15 @@ def _send_pollinations_request(
     payload = {
         "model": model_name,
         "messages": messages,
+        "temperature": POLLINATIONS_TEXT_TEMPERATURE,
     }
     
+    if POLLINATIONS_API_KEY:
+        payload["token"] = POLLINATIONS_API_KEY
+        log.debug("Using Pollinations API key in request payload (as 'token')")
+
     headers = {"Content-Type": "application/json"}
     
-    if POLLINATIONS_API_KEY:
-        headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
-        log.debug("Using Pollinations API key for authenticated request")
-
     try:
         log.debug(f"Sending Pollinations request to {POLLINATIONS_TEXT_BASE_URL}")
         response = requests.post(
@@ -838,8 +843,15 @@ def _generate_image_via_pollinations(
         "model": model_name,
     }
     
+    # Обновленная логика добавления параметров
     if POLLINATIONS_SAFE_MODE:
         params["safe"] = "true"
+    
+    if POLLINATIONS_PRIVATE_IMAGES: # <-- ДОБАВЛЕНО
+        params["private"] = "true"
+        
+    if POLLINATIONS_NO_LOGO: # <-- ДОБАВЛЕНО
+        params["nologo"] = "true"
     
     query = "&".join(f"{key}={urllib.parse.quote_plus(value)}" for key, value in params.items())
     url = f"{POLLINATIONS_BASE_URL.rstrip('/')}/prompt/{encoded_prompt}?{query}"
@@ -850,7 +862,7 @@ def _generate_image_via_pollinations(
         log.debug("Using Pollinations API key for image generation")
     
     try:
-        log.info(f"Generating {'SAFE ' if POLLINATIONS_SAFE_MODE else ''}image via Pollinations")
+        log.info(f"Generating image via Pollinations with params: {params}") # Улучшенное логирование
         response = requests.get(
             url, 
             headers=headers if headers else None,
@@ -859,8 +871,14 @@ def _generate_image_via_pollinations(
         response.raise_for_status()
         
         if response.content:
-            provider_name = f"pollinations:{model_name}" + (":safe" if POLLINATIONS_SAFE_MODE else "")
-            log.info("Generated image via Pollinations")
+            # Формируем имя провайдера с учетом всех флагов
+            provider_tags = [f"pollinations:{model_name}"]
+            if POLLINATIONS_SAFE_MODE: provider_tags.append("safe")
+            if POLLINATIONS_PRIVATE_IMAGES: provider_tags.append("private")
+            if POLLINATIONS_NO_LOGO: provider_tags.append("nologo")
+            provider_name = ":".join(provider_tags)
+            
+            log.info(f"Generated image via {provider_name}")
             return response.content, provider_name
         
         log.warning("Pollinations returned empty image content")

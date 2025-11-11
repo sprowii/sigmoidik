@@ -89,55 +89,47 @@ LLM_PROVIDER_ORDER: List[str] = [
 # POLLINATIONS CONFIGURATION
 # ============================================================================
 
-# Безопасные модели для Telegram
-POLLINATIONS_SAFE_MODELS = {
-    "openai": "GPT-5 Nano",
-    "openai-fast": "GPT-4.1 Nano (Fast)",
-    "openai-large": "GPT-4.1 (Advanced)",
-    "openai-reasoning": "o4 Mini (Reasoning)",
-    "deepseek": "DeepSeek V3.1 (Reasoning)",
-    "gemini": "Gemini 2.5 Flash Lite",
-    "gemini-search": "Gemini 2.5 + Google Search",
-    "mistral": "Mistral Small 3.2 24B",
-    "bidara": "NASA BIDARA",
-    "chickytutor": "ChickyTutor",
-    "rtist": "Rtist",
-}
+# --- Text Generation ---
 
-# Authentication (опционально, но рекомендуется для лучших лимитов)
-POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY")
-
-# Text Generation
+# URL для текстовых моделей Pollinations
 POLLINATIONS_TEXT_BASE_URL = os.getenv(
     "POLLINATIONS_TEXT_BASE_URL", 
     "https://text.pollinations.ai/openai"
 )
 
+# API ключ (токен) для Pollinations. Будет добавлен в поле 'token' в JSON.
+POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY")
+
+# Список доступных текстовых моделей, через запятую.
+# По умолчанию используются модели, которые вы просили: 'o4-mini' и 'gemini-search'
 POLLINATIONS_TEXT_MODELS: List[str] = [
     model.strip()
     for model in os.getenv(
         "POLLINATIONS_TEXT_MODELS",
-        "gemini-search,deepseek,openai,mistral",
+        "o4-mini,gemini-search",
     ).split(",")
-    if model.strip() and model.strip() in POLLINATIONS_SAFE_MODELS
+    if model.strip()
 ]
 
+# Запасной вариант, если переменная окружения пуста
 if not POLLINATIONS_TEXT_MODELS:
-    POLLINATIONS_TEXT_MODELS = ["openai"]
+    POLLINATIONS_TEXT_MODELS = ["o4-mini"]
 
-POLLINATIONS_TEXT_DEFAULT = os.getenv("POLLINATIONS_TEXT_DEFAULT", "gemini-search")
-
-if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_SAFE_MODELS:
-    POLLINATIONS_TEXT_DEFAULT = "openai"
-
-if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_MODELS:
+# Модель по умолчанию
+POLLINATIONS_TEXT_DEFAULT = os.getenv("POLLINATIONS_TEXT_DEFAULT", "o4-mini")
+if POLLINATIONS_TEXT_DEFAULT not in POLLINATIONS_TEXT_MODELS:
     POLLINATIONS_TEXT_DEFAULT = POLLINATIONS_TEXT_MODELS[0]
 
-POLLINATIONS_TEXT_TIMEOUT = float(os.getenv("POLLINATIONS_TEXT_TIMEOUT", "60"))
+# Температура для генерации ответа. 1.0 = более креативный, 0.1 = более точный.
+POLLINATIONS_TEXT_TEMPERATURE = float(os.getenv("POLLINATIONS_TEXT_TEMPERATURE", "1.0"))
 
-# Image Generation
+# Таймаут для текстовых запросов
+POLLINATIONS_TEXT_TIMEOUT = float(os.getenv("POLLINATIONS_TEXT_TIMEOUT", "120.0"))
+
+
+# --- Image Generation ---
 POLLINATIONS_ENABLED = os.getenv("POLLINATIONS_ENABLED", "true").lower() in {"1", "true", "yes"}
-POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "flux")
+POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "flux") # Модель для генерации изображений по умолчанию
 
 _pollinations_models_raw = os.getenv("POLLINATIONS_MODELS")
 if _pollinations_models_raw:
@@ -156,6 +148,8 @@ POLLINATIONS_SEED = os.getenv("POLLINATIONS_SEED")
 POLLINATIONS_TIMEOUT = float(os.getenv("POLLINATIONS_TIMEOUT", "300"))
 POLLINATIONS_SAFE_MODE = os.getenv("POLLINATIONS_SAFE_MODE", "true").lower() in {"1", "true", "yes"}
 
+POLLINATIONS_PRIVATE_IMAGES = os.getenv("POLLINATIONS_PRIVATE_IMAGES", "true").lower() in {"1", "true", "yes"}
+POLLINATIONS_NO_LOGO = os.getenv("POLLINATIONS_NO_LOGO", "true").lower() in {"1", "true", "yes"}
 # ============================================================================
 
 MAX_HISTORY = 10
@@ -195,7 +189,7 @@ log.info(f"Loaded {len(API_KEYS)} Gemini API keys")
 log.info(f"Loaded {len(OPENROUTER_API_KEYS)} OpenRouter API keys")
 log.info(f"Pollinations enabled: {POLLINATIONS_ENABLED}")
 log.info(f"Pollinations authenticated: {bool(POLLINATIONS_API_KEY)}")
-log.info(f"Pollinations safe mode: {POLLINATIONS_SAFE_MODE}")
+log.info(f"Pollinations safe mode (images): {POLLINATIONS_SAFE_MODE}")
 log.info(f"LLM provider order: {LLM_PROVIDER_ORDER}")
 log.info(f"Gemini models: {MODELS}")
 log.info(f"OpenRouter models: {OPENROUTER_MODELS}")
