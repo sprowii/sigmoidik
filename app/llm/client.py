@@ -401,25 +401,31 @@ def _response_parts(response: Any) -> List[Dict[str, Any]]:
     
     if candidates:
         candidate = candidates[0]
+        log.info(f"PROCESSING CANDIDATE: {candidate}")
+
         content = getattr(candidate, "content", None)
         if content is None and isinstance(candidate, dict):
             content = candidate.get("content")
-        
+
         parts = getattr(content, "parts", None)
         if parts is None and isinstance(content, dict):
             parts = content.get("parts", [])
-        
+
         if parts:
             cleaned_parts = []
             for part in parts:
                 mapped = _part_from_any(part)
                 if mapped:
                     cleaned_parts.append(mapped)
+
+            log.info(f"CLEANED PARTS before return: {cleaned_parts}")
             return cleaned_parts
     
     text = getattr(response, "text", None)
     if text:
         return [{"text": text}]
+
+    log.info("No parts found in response.")
     return []
 
 
@@ -515,8 +521,14 @@ def _send_gemini_request(
                     config=_request_config(),
                 )
 
+                log.info(f"RAW GEMINI RESPONSE: {response}")
+
                 parts = _response_parts(response)
+                log.info(f"PARSED PARTS: {parts}")
+
                 reply_text = _extract_text_from_parts(parts)
+                log.info(f"EXTRACTED TEXT: '{reply_text}'")
+
                 fn_call = _extract_function_call(parts)
                 
                 current_key_idx, current_model_idx = key_idx, model_idx
@@ -827,6 +839,8 @@ def llm_request(
         if result:
             parts = result.get("parts") or []
             reply_text = (result.get("reply_text") or "").strip()
+            log.info(f"FINAL RESULT in llm_request. Reply text: '{reply_text}'")
+
             fn_call = result.get("fn_call")
             model_name = result.get("model_name", provider)
 
