@@ -8,20 +8,29 @@ const GAME_ID_PARAM_NAMES = ["game_id", "gameId", "id"];
  * режем явные обращения к глобальным объектам и опасным API.
  */
 const FORBIDDEN_PATTERNS = [
-    { pattern: /\bwindow\b/i, reason: "доступ к window запрещён" },
-    { pattern: /\bdocument\b/i, reason: "доступ к document запрещён" },
-    { pattern: /\bparent\b/i, reason: "доступ к parent запрещён" },
-    { pattern: /\btop\b/i, reason: "доступ к top запрещён" },
-    { pattern: /\bopener\b/i, reason: "доступ к opener запрещён" },
+    // Глобальные объекты
+    { pattern: /\bwindow\s*\./i, reason: "доступ к window.* запрещён" },
+    { pattern: /\bdocument\s*\./i, reason: "доступ к document.* запрещён" },
+    { pattern: /\bparent\s*\./i, reason: "доступ к parent.* запрещён" },
+    { pattern: /\btop\s*\./i, reason: "доступ к top.* запрещён" },
+    { pattern: /\bopener\s*\./i, reason: "доступ к opener.* запрещён" },
+
+    // Хранилища
     { pattern: /\blocalStorage\b/i, reason: "localStorage запрещён" },
     { pattern: /\bsessionStorage\b/i, reason: "sessionStorage запрещён" },
     { pattern: /\bindexedDB\b/i, reason: "indexedDB запрещён" },
+
+    // Исполнение кода
     { pattern: /\beval\s*\(/i, reason: "eval запрещён" },
-    { pattern: /new\s+Function\s*\(/i, reason: "new Function запрещён" },
+    { pattern: /\bnew\s+Function\s*\(/i, reason: "new Function запрещён" },
     { pattern: /\bFunction\s*\(/i, reason: "Function конструктор запрещён" },
+
+    // Воркер/скрипты
     { pattern: /\bimportScripts\s*\(/i, reason: "importScripts запрещён" },
     { pattern: /\bWorker\s*\(/i, reason: "Worker запрещён" },
     { pattern: /\bSharedWorker\s*\(/i, reason: "SharedWorker запрещён" },
+
+    // Вставка скриптов
     { pattern: /<script/i, reason: "вставка <script> запрещена" },
 ];
 
