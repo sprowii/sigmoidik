@@ -88,7 +88,7 @@ def main():
     app = build_application(token, bot_info["username"])
     
     from app.web.server import set_application
-    set_application(app)
+    set_application(app, None)  # Для polling режима loop не нужен
 
     # Запускаем Flask в отдельном потоке
     threading.Thread(
@@ -111,10 +111,14 @@ def main():
         if webhook_ok:
             loop.run_until_complete(app.initialize())
             loop.run_until_complete(app.start())
+            
+            # Передаём loop в server.py для обработки вебхуков из Flask-потока
+            from app.web.server import set_application
+            set_application(app, loop)
+            
             log.info("Bot started with webhook (Flask handling) 🚀")
-            # Flask handles /telegram-webhook, keep process alive
-            while True:
-                time.sleep(60)
+            # Держим event loop запущенным, чтобы Flask мог отправлять корутины
+            loop.run_forever()
         else:
             log.warning("Webhook setup failed, falling back to polling")
             log.info("Bot started with polling 🚀")

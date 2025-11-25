@@ -46,12 +46,14 @@ flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"  # Защита от CSRF
 
 
 application: Optional[Application] = None
+main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
-def set_application(ptb_app: Application) -> None:
+def set_application(ptb_app: Application, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
     """Set the PTB application instance for webhook handling."""
-    global application
+    global application, main_loop
     application = ptb_app
+    main_loop = loop
 
 
 def _make_share_url(game_id: Optional[str]) -> Optional[str]:
@@ -520,9 +522,14 @@ def telegram_webhook():
     update = Update.de_json(json.loads(json_string), application.bot)
     if update:
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(application.process_update(update))
+            # Flask работает в другом потоке, используем run_coroutine_threadsafe
+            # чтобы выполнить корутину в main event loop где живёт PTB Application
+            if main_loop is not None and main_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(application.process_update(update), main_loop)
+                future.result(timeout=60)
+            else:
+                log.error("Main event loop not available or not running")
+                return Response("Event loop not ready", status=503)
         except Exception as exc:
             log.error(f"Error processing Telegram update: {exc}", exc_info=True)
     return Response("OK", status=200)
