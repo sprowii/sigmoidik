@@ -109,6 +109,8 @@ def main():
         webhook_ok = loop.run_until_complete(setup_webhook(app, webhook_url, config.FLASK_PORT))
         
         if webhook_ok:
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
             log.info("Bot started with webhook (Flask handling) 🚀")
             # Flask handles /telegram-webhook, keep process alive
             while True:
