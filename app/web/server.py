@@ -29,6 +29,7 @@ from app.storage.redis_store import (
 
 from telegram import Update
 from telegram.ext import Application
+import asyncio
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 WEBAPP_DIR = BASE_DIR / "webapp"
@@ -518,5 +519,10 @@ def telegram_webhook():
     json_string = request.get_data().decode("utf-8")
     update = Update.de_json(json.loads(json_string), application.bot)
     if update:
-        application.process_update(update)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(application.process_update(update))
+        except Exception as exc:
+            log.error(f"Error processing Telegram update: {exc}", exc_info=True)
     return Response("OK", status=200)
