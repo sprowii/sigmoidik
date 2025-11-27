@@ -274,6 +274,42 @@ def _from_base64_maybe(data: Any) -> Any:
     return data
 
 
+def _strip_large_media(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Удаляет большие медиа-файлы из сообщения для сохранения в историю."""
+    parts = message.get("parts", [])
+    stripped_parts: List[Dict[str, Any]] = []
+    
+    for part in parts:
+        if isinstance(part, dict):
+            if "inline_data" in part:
+                inline = part["inline_data"]
+                mime = inline.get("mime_type") or inline.get("mimeType") or ""
+                data = inline.get("data")
+                
+                # Проверяем размер данных
+                data_size = 0
+                if isinstance(data, bytes):
+                    data_size = len(data)
+                elif isinstance(data, str):
+                    # Base64 строка
+                    data_size = len(data) * 3 // 4  # Примерный размер после декодирования
+                
+                # Если видео или файл > 1MB, заменяем на текстовое описание
+                if mime.startswith("video/") or data_size > 1024 * 1024:
+                    stripped_parts.append({
+                        "text": f"[Медиа-файл: {mime}, ~{data_size // 1024}KB - не сохранено в историю]"
+                    })
+                else:
+                    # Сохраняем небольшие изображения
+                    stripped_parts.append(part)
+            elif "text" in part:
+                stripped_parts.append(part)
+        else:
+            stripped_parts.append({"text": str(part)})
+    
+    return {"role": message.get("role", "user"), "parts": stripped_parts}
+
+
 def _normalize_prompt_parts(prompt_parts: List[Any]) -> Dict[str, Any]:
     normalized: List[Dict[str, Any]] = []
     for part in prompt_parts:
@@ -1087,7 +1123,11 @@ def llm_request(
             fn_call = result.get("fn_call")
             model_name = result.get("model_name", provider)
 
-            new_history = stored_history + [user_message]
+            # Не сохраняем видео в историю (слишком большое для Redis)
+            # Заменяем видео на текстовое описание
+            user_message_for_history = _strip_large_media(user_message)
+            
+            new_history = stored_history + [user_message_for_history]
             if parts:
                 new_history.append({"role": "model", "parts": parts})
             history[chat_id] = new_history

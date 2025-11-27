@@ -584,10 +584,15 @@ def telegram_webhook():
             # чтобы выполнить корутину в main event loop где живёт PTB Application
             if main_loop is not None and main_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(application.process_update(update), main_loop)
-                future.result(timeout=60)
+                # Увеличиваем timeout для обработки видео (может занять до 2 минут)
+                future.result(timeout=120)
             else:
                 log.error("Main event loop not available or not running")
                 return Response("Event loop not ready", status=503)
+        except asyncio.TimeoutError:
+            log.error("Webhook processing timeout (120s exceeded)")
+            # Возвращаем OK чтобы Telegram не повторял запрос
+            return Response("OK", status=200)
         except Exception as exc:
             log.error(f"Error processing Telegram update: {exc}", exc_info=True)
     return Response("OK", status=200)
