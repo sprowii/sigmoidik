@@ -24,6 +24,7 @@ from app.features.translator import translate_text, detect_language
 from app.features.summarizer import summarize_text, summarize_url
 
 MAX_IMAGE_BYTES = config.MAX_IMAGE_BYTES
+MAX_VIDEO_BYTES = getattr(config, "ZAI_MAX_VIDEO_BYTES", 200 * 1024 * 1024)
 async def ensure_user_profile(update: Update):
     chat = update.effective_chat
     user = update.effective_user
@@ -55,12 +56,18 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll_models = ", ".join(config.POLLINATIONS_MODELS) if getattr(config, "POLLINATIONS_MODELS", None) else config.POLLINATIONS_MODEL
     poll_text_models = ", ".join(config.POLLINATIONS_TEXT_MODELS) if getattr(config, "POLLINATIONS_TEXT_MODELS", None) else config.POLLINATIONS_TEXT_DEFAULT
     provider_options = ["gemini"]
+    if getattr(config, "ZAI_API_KEY", None):
+        provider_options.append("zai")
     if config.OPENROUTER_API_KEYS and config.OPENROUTER_MODELS:
         provider_options.append("openrouter")
     if getattr(config, "POLLINATIONS_TEXT_MODELS", None):
         provider_options.append("pollinations")
     provider_hint = ", ".join(provider_options + ["auto"])
+    
+    video_hint = "🎬 Видео поддерживается через Z.AI!\n\n" if getattr(config, "ZAI_API_KEY", None) else ""
+    
     await update.message.reply_text(
+        f"{video_hint}"
         "<b>Основные:</b>\n"
         "/tr [язык] текст – перевести 🌍\n"
         "/sum текст/url – краткое содержание 📝\n"
@@ -71,6 +78,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/settings – текущие настройки\n"
         f"/set_provider &lt;{provider_hint}&gt; – выбрать LLM\n"
         "/set_or_model – модель OpenRouter\n"
+        "/set_zai_model – модель Z.AI\n"
         "/set_msgsize &lt;s|m|l&gt; – размер ответа\n\n"
         "<b>Админ:</b>\n"
         "/autopost on|off – автопосты\n"
@@ -179,24 +187,24 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     provider = cfg.llm_provider or "auto"
     pollinations_text = cfg.pollinations_text_model or config.POLLINATIONS_TEXT_DEFAULT
     openrouter_model = cfg.openrouter_model or "ротация"
-    provider_line = (
-        f"<b>LLM:</b> {html.escape(provider)}"
-        + (
-            f" (Pollinations → {html.escape(pollinations_text)})"
-            if provider == "pollinations" and pollinations_text
-            else ""
-        )
-        + (
-            f" (OpenRouter → {html.escape(openrouter_model)})"
-            if provider == "openrouter"
-            else ""
-        )
-    )
+    zai_model = getattr(cfg, "zai_model", None) or getattr(config, "ZAI_DEFAULT_MODEL", "glm-4.6")
+    
+    provider_line = f"<b>LLM:</b> {html.escape(provider)}"
+    if provider == "pollinations" and pollinations_text:
+        provider_line += f" (Pollinations → {html.escape(pollinations_text)})"
+    elif provider == "openrouter":
+        provider_line += f" (OpenRouter → {html.escape(openrouter_model)})"
+    elif provider == "zai":
+        provider_line += f" (Z.AI → {html.escape(zai_model)}, 🎬 видео)"
+    
+    zai_status = "✅ Z.AI (видео)" if getattr(config, "ZAI_API_KEY", None) else "❌ Z.AI"
+    
     await update.message.reply_text(
         f"<b>Автопосты:</b> {'вкл' if cfg.autopost_enabled else 'выкл'}.\n"
         f"<b>Интервал:</b> {cfg.interval} сек, <b>мин. сообщений:</b> {cfg.min_messages}.\n"
         f"<b>Размер ответа:</b> {cfg.msg_size or 'default'}.\n"
-        f"{provider_line}",
+        f"{provider_line}\n"
+        f"<b>Провайдеры:</b> {zai_status}",
         parse_mode=ParseMode.HTML,
     )
 async def autopost_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -361,6 +369,8 @@ async def set_provider(update: Update, context: ContextTypes.DEFAULT_TYPE):
     available: List[str] = []
     if config.API_KEYS:
         available.append("gemini")
+    if getattr(config, "ZAI_API_KEY", None):
+        available.append("zai")
     if config.OPENROUTER_API_KEYS and config.OPENROUTER_MODELS:
         available.append("openrouter")
     if getattr(config, "POLLINATIONS_TEXT_MODELS", None):
@@ -403,6 +413,14 @@ async def set_provider(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Для этого чата выбран провайдер LLM: pollinations.\n"
             f"Используется текстовая модель Pollinations: {cfg.pollinations_text_model}.\n"
             "Чтобы сменить модель, воспользуйся командой /set_pollinations_text_model <название>."
+        )
+    elif value == "zai":
+        zai_model = getattr(cfg, "zai_model", None) or config.ZAI_DEFAULT_MODEL
+        await message.reply_text(
+            f"Для этого чата выбран провайдер LLM: zai (Z.AI/ZhipuAI).\n"
+            f"Используется модель: {zai_model}.\n"
+            "🎬 Z.AI поддерживает видео! Отправь видео и я его проанализирую.\n"
+            "Чтобы сменить модель, воспользуйся командой /set_zai_model <название>."
         )
     else:
         await message.reply_text(f"Для этого чата выбран провайдер LLM: {value}")
@@ -530,9 +548,72 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     await ensure_user_profile(update)
+    
+    # Проверяем, есть ли Z.AI для обработки видео
+    zai_available = bool(getattr(config, "ZAI_API_KEY", None))
+    
+    # Обработка видео и видео-кружочков
+    video = update.message.video or update.message.video_note
+    if video and zai_available:
+        # Rate limiting
+        user_id = update.effective_user.id
+        allowed, message = check_rate_limit(user_id)
+        if not allowed:
+            await update.message.reply_text(message)
+            return
+        
+        chat_id = update.effective_chat.id
+        record_user_profile(chat_id, update.effective_user)
+        
+        # Проверяем размер видео
+        if video.file_size and video.file_size > MAX_VIDEO_BYTES:
+            await update.message.reply_text(
+                f"⚠️ Видео слишком большое. Максимум {MAX_VIDEO_BYTES // (1024*1024)} МБ."
+            )
+            return
+        
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        
+        try:
+            file = await video.get_file()
+            video_buffer = io.BytesIO()
+            await file.download_to_memory(out=video_buffer)
+            video_bytes = video_buffer.getvalue()
+            
+            if len(video_bytes) > MAX_VIDEO_BYTES:
+                await update.message.reply_text(
+                    f"⚠️ Видео слишком большое. Максимум {MAX_VIDEO_BYTES // (1024*1024)} МБ."
+                )
+                return
+            
+            # Определяем MIME тип
+            mime_type = getattr(video, "mime_type", None) or "video/mp4"
+            
+            # Формируем prompt
+            caption = update.message.caption or "Опиши, что происходит на этом видео"
+            cfg = get_cfg(chat_id)
+            
+            prompt_parts: List = [
+                {"inline_data": {"mime_type": mime_type, "data": video_bytes}},
+                {"text": answer_size_prompt(cfg.msg_size) + caption}
+            ]
+            
+            # Принудительно используем Z.AI для видео
+            cfg.llm_provider = "zai"
+            await persist_chat_data(chat_id)
+            
+            await send_bot_response(update, context, chat_id, prompt_parts)
+            
+        except Exception as exc:
+            log.error(f"Video processing error: {exc}", exc_info=True)
+            await update.message.reply_text("⚠️ Не удалось обработать видео. Попробуйте позже.")
+        return
+    
+    # Для голосовых сообщений и видео без Z.AI
     await update.message.reply_text(
-        "😔 Извините, я пока не умею обрабатывать голосовые сообщения, видео и видео-кружочки.\n\n"
-        "Пожалуйста, опишите ваш вопрос текстом или отправьте фото — с ними я работаю отлично!"
+        "😔 Извините, я пока не умею обрабатывать голосовые сообщения.\n\n"
+        + ("Для видео нужен Z.AI провайдер (не настроен).\n\n" if not zai_available else "")
+        + "Пожалуйста, опишите ваш вопрос текстом или отправьте фото — с ними я работаю отлично!"
     )
 async def login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user_profile(update)
@@ -741,6 +822,66 @@ async def set_openrouter_model_handler(update: Update, context: ContextTypes.DEF
     await update.message.reply_html(
         f"✅ Готово! Ваша модель OpenRouter установлена на:\n<b>{chosen_model}</b>"
     )
+
+
+async def set_zai_model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Устанавливает или показывает предпочитаемую модель Z.AI.
+    При вызове без аргументов показывает текущее значение и список доступных моделей.
+    """
+    await ensure_user_profile(update)
+    if not update.message or not update.effective_chat:
+        return
+    
+    zai_models = getattr(config, "ZAI_TEXT_MODELS", [])
+    zai_vision = getattr(config, "ZAI_VISION_MODEL", "glm-4.5v")
+    
+    if not getattr(config, "ZAI_API_KEY", None):
+        await update.message.reply_text("Z.AI не настроен. Установите ZAI_API_KEY.")
+        return
+
+    chat_id = update.effective_chat.id
+    cfg = get_cfg(chat_id)
+    args = context.args
+    
+    if not args:
+        current_model = getattr(cfg, 'zai_model', None) or config.ZAI_DEFAULT_MODEL
+        
+        available_models_text = "\n".join([f"• <code>{model}</code>" for model in zai_models])
+        
+        await update.message.reply_html(
+            f"Текущая модель Z.AI: <b>{current_model}</b>\n"
+            f"Модель для видео: <b>{zai_vision}</b> (автоматически)\n\n"
+            f"Чтобы изменить, используйте команду с названием модели, например:\n"
+            f"<code>/set_zai_model glm-4.6</code>\n\n"
+            f"<b>Доступные текстовые модели:</b>\n{available_models_text}"
+        )
+        return
+
+    chosen_model = args[0].strip().lower()
+    
+    # Ищем модель (case-insensitive)
+    matched = None
+    for model in zai_models:
+        if model.lower() == chosen_model:
+            matched = model
+            break
+    
+    if not matched:
+        await update.message.reply_html(
+            f"❌ <b>Ошибка:</b> Модель '<code>{chosen_model}</code>' не найдена.\n"
+            f"Используйте команду <code>/set_zai_model</code> без параметров, чтобы увидеть список."
+        )
+        return
+
+    cfg.zai_model = matched
+    await persist_chat_data(chat_id)
+    
+    await update.message.reply_html(
+        f"✅ Готово! Ваша модель Z.AI установлена на:\n<b>{matched}</b>\n\n"
+        f"🎬 Для видео автоматически используется {zai_vision}"
+    )
+
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user_profile(update)

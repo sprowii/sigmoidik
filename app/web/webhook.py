@@ -27,12 +27,14 @@ async def setup_webhook(app: Application, webhook_url: str, port: int) -> bool:
         await app.bot.delete_webhook(drop_pending_updates=True)
         log.info("Deleted old webhook")
         
-        # Устанавливаем новый webhook
+        # Устанавливаем новый webhook с секретным токеном для верификации
+        from app import config
         webhook_path = f"{webhook_url}/telegram-webhook"
         success = await app.bot.set_webhook(
             url=webhook_path,
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=False,
+            secret_token=config.WEBHOOK_SECRET_TOKEN,
         )
         
         if success:

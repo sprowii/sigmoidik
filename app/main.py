@@ -64,6 +64,7 @@ def build_application(token: str, bot_username: str):
         "set_draw_model": handlers.set_draw_model,
         "set_pollinations_text_model": handlers.set_pollinations_text_model,
         "set_or_model": handlers.set_openrouter_model_handler,
+        "set_zai_model": handlers.set_zai_model_handler,
         "set_provider": handlers.set_provider,
     }
     for command, callback in command_handlers.items():

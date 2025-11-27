@@ -28,6 +28,10 @@ TG_TOKEN = os.getenv("TG_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DOWNLOAD_KEY = os.getenv("DOWNLOAD_KEY")
 
+# Секретный токен для верификации Telegram webhook запросов
+# Если не задан, генерируется автоматически при каждом запуске
+WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN") or secrets.token_urlsafe(32)
+
 
 def _load_api_keys() -> List[str]:
     keys: List[str] = []
@@ -84,7 +88,7 @@ OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "45"))
 
 LLM_PROVIDER_ORDER: List[str] = [
     provider.strip().lower()
-    for provider in os.getenv("LLM_PROVIDER_ORDER", "gemini,openrouter,pollinations").split(",")
+    for provider in os.getenv("LLM_PROVIDER_ORDER", "gemini,zai,openrouter,pollinations").split(",")
     if provider.strip()
 ]
 
@@ -155,6 +159,38 @@ POLLINATIONS_PRIVATE_IMAGES = os.getenv("POLLINATIONS_PRIVATE_IMAGES", "true").l
 POLLINATIONS_NO_LOGO = os.getenv("POLLINATIONS_NO_LOGO", "true").lower() in {"1", "true", "yes"}
 # ============================================================================
 
+# ============================================================================
+# Z.AI (ZHIPUAI) CONFIGURATION
+# ============================================================================
+ZAI_API_KEY = os.getenv("ZAI_API_KEY")
+ZAI_BASE_URL = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api")
+ZAI_TIMEOUT = float(os.getenv("ZAI_TIMEOUT", "60"))
+
+# Текстовые модели Z.AI
+ZAI_TEXT_MODELS: List[str] = [
+    model.strip()
+    for model in os.getenv(
+        "ZAI_TEXT_MODELS",
+        "glm-4.6,glm-4.5,glm-4-plus,glm-4.5-air,glm-4.5-airx,glm-4.5-flash,glm-4-32b-0414-128k",
+    ).split(",")
+    if model.strip()
+]
+
+# Модель для видео (только GLM-4.5V поддерживает видео/изображения)
+ZAI_VISION_MODEL = os.getenv("ZAI_VISION_MODEL", "glm-4.5v")
+
+# Модель по умолчанию
+ZAI_DEFAULT_MODEL = os.getenv("ZAI_DEFAULT_MODEL", "glm-4.6")
+if ZAI_DEFAULT_MODEL not in ZAI_TEXT_MODELS:
+    ZAI_DEFAULT_MODEL = ZAI_TEXT_MODELS[0] if ZAI_TEXT_MODELS else "glm-4.6"
+
+# Температура по умолчанию
+ZAI_TEMPERATURE = float(os.getenv("ZAI_TEMPERATURE", "1.0"))
+
+# Максимальный размер видео (200MB по документации)
+ZAI_MAX_VIDEO_BYTES = int(os.getenv("ZAI_MAX_VIDEO_BYTES", 200 * 1024 * 1024))
+# ============================================================================
+
 MAX_HISTORY = 10
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
@@ -190,10 +226,12 @@ SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "sig_session")
 # Диагностика
 log.info(f"Loaded {len(API_KEYS)} Gemini API keys")
 log.info(f"Loaded {len(OPENROUTER_API_KEYS)} OpenRouter API keys")
+log.info(f"Z.AI enabled: {bool(ZAI_API_KEY)}")
 log.info(f"Pollinations enabled: {POLLINATIONS_ENABLED}")
 log.info(f"Pollinations authenticated: {bool(POLLINATIONS_API_KEY)}")
 log.info(f"Pollinations safe mode (images): {POLLINATIONS_SAFE_MODE}")
 log.info(f"LLM provider order: {LLM_PROVIDER_ORDER}")
 log.info(f"Gemini models: {MODELS}")
+log.info(f"Z.AI models: {ZAI_TEXT_MODELS}, vision: {ZAI_VISION_MODEL}")
 log.info(f"OpenRouter models: {OPENROUTER_MODELS}")
 log.info(f"Pollinations text models: {POLLINATIONS_TEXT_MODELS}, default: {POLLINATIONS_TEXT_DEFAULT}")

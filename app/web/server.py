@@ -45,6 +45,37 @@ flask_app.config["SESSION_COOKIE_HTTPONLY"] = True  # Защита от XSS
 flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"  # Защита от CSRF
 
 
+@flask_app.after_request
+def add_security_headers(response):
+    """Добавляет security headers ко всем ответам."""
+    # Защита от clickjacking
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    # Защита от MIME-type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # XSS Protection (для старых браузеров)
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Referrer Policy
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Permissions Policy (отключаем ненужные API)
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # Content Security Policy
+    # Разрешаем: свои скрипты/стили, Google Fonts, CDN для Three.js
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self'; "
+        "frame-src 'self'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    response.headers["Content-Security-Policy"] = csp
+    return response
+
+
 application: Optional[Application] = None
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -339,12 +370,23 @@ def auth_session():
 
 @flask_app.route("/api/auth/login", methods=["POST"])
 def auth_login():
+    # Rate limiting для защиты от brute-force атак
+    from app.middleware.rate_limit import check_login_rate_limit
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(",")[0].strip()  # Берём первый IP из цепочки
+    allowed, message = check_login_rate_limit(client_ip or "unknown")
+    if not allowed:
+        return jsonify({"error": "rate_limit", "message": message}), 429
+    
     data = request.get_json(silent=True) or {}
     code = (data.get("code") or "").strip().upper()
     if not code:
         abort(400, description="Код обязателен.")
     decoded = consume_login_code(code)
     if not decoded:
+        # Логируем неудачную попытку входа для мониторинга
+        log.warning(f"Failed login attempt from IP {client_ip} with code: {code[:2]}***")
         abort(400, description="Код недействителен или истёк.")
     session["user"] = {
         "user_id": decoded.get("user_id"),
@@ -419,6 +461,15 @@ def list_games_api():
 
 @flask_app.route("/api/games", methods=["POST"])
 def create_game_api():
+    # Rate limiting для защиты от DoS через генерацию
+    from app.middleware.rate_limit import check_web_rate_limit
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+    allowed, message = check_web_rate_limit(client_ip or "unknown")
+    if not allowed:
+        return jsonify({"error": "rate_limit", "message": message}), 429
+    
     _require_user()
     data = request.get_json(silent=True) or {}
     idea = (data.get("idea") or "").strip()
@@ -518,6 +569,13 @@ def telegram_webhook():
     """Handle Telegram webhook updates via Flask."""
     if application is None:
         return Response("Application not ready", status=503)
+    
+    # Проверяем секретный токен для защиты от поддельных запросов
+    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if not secret_token or not secrets.compare_digest(secret_token, config.WEBHOOK_SECRET_TOKEN):
+        log.warning("Webhook request with invalid or missing secret token")
+        return Response("Unauthorized", status=401)
+    
     json_string = request.get_data().decode("utf-8")
     update = Update.de_json(json.loads(json_string), application.bot)
     if update:

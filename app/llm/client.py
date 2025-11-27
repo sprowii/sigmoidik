@@ -39,6 +39,14 @@ from app.config import (
     POLLINATIONS_TEXT_TIMEOUT,
     POLLINATIONS_TIMEOUT,
     POLLINATIONS_WIDTH,
+    ZAI_API_KEY,
+    ZAI_BASE_URL,
+    ZAI_DEFAULT_MODEL,
+    ZAI_MAX_VIDEO_BYTES,
+    ZAI_TEMPERATURE,
+    ZAI_TEXT_MODELS,
+    ZAI_TIMEOUT,
+    ZAI_VISION_MODEL,
 )
 from app.logging_config import log
 from app.state import configs, history
@@ -53,6 +61,7 @@ current_or_key_idx = 0
 current_or_model_idx = 0
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+ZAI_CHAT_URL = f"{ZAI_BASE_URL}/paas/v4/chat/completions"
 SERVICE_UNAVAILABLE_DELAY = 2.0
 MODEL_CHECK_INTERVAL = 3600.0
 
@@ -78,6 +87,8 @@ def _normalize_provider_name(value: Optional[str]) -> Optional[str]:
         return "openrouter" if OPENROUTER_API_KEYS and OPENROUTER_MODELS else None
     if normalized == "pollinations":
         return "pollinations" if POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL else None
+    if normalized == "zai":
+        return "zai" if ZAI_API_KEY and ZAI_TEXT_MODELS else None
     return None
 
 
@@ -85,10 +96,10 @@ def _provider_sequence(preferred: Optional[str] = None) -> List[str]:
     normalized_preferred = _normalize_provider_name(preferred)
     ordered_config = [
         provider for provider in LLM_PROVIDER_ORDER 
-        if provider in {"gemini", "openrouter", "pollinations"}
+        if provider in {"gemini", "zai", "openrouter", "pollinations"}
     ]
     if not ordered_config:
-        ordered_config = ["gemini", "openrouter", "pollinations"]
+        ordered_config = ["gemini", "zai", "openrouter", "pollinations"]
 
     if normalized_preferred:
         ordered = [normalized_preferred] + [p for p in ordered_config if p != normalized_preferred]
@@ -99,6 +110,8 @@ def _provider_sequence(preferred: Optional[str] = None) -> List[str]:
     for provider in ordered:
         if provider == "gemini" and API_KEYS and GEMINI_MODELS:
             sequence.append("gemini")
+        elif provider == "zai" and ZAI_API_KEY and ZAI_TEXT_MODELS:
+            sequence.append("zai")
         elif provider == "openrouter" and OPENROUTER_API_KEYS and OPENROUTER_MODELS:
             sequence.append("openrouter")
         elif provider == "pollinations" and POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL:
@@ -107,6 +120,8 @@ def _provider_sequence(preferred: Optional[str] = None) -> List[str]:
     if not sequence:
         if API_KEYS:
             sequence.append("gemini")
+        if ZAI_API_KEY and ZAI_TEXT_MODELS:
+            sequence.append("zai")
         if OPENROUTER_API_KEYS and OPENROUTER_MODELS:
             sequence.append("openrouter")
         if POLLINATIONS_TEXT_MODELS and POLLINATIONS_TEXT_BASE_URL:
@@ -785,6 +800,205 @@ def _send_pollinations_request(
     return None
 
 
+def _message_has_video(parts: List[Dict[str, Any]]) -> bool:
+    """Проверяет, содержит ли сообщение видео."""
+    for part in parts:
+        if isinstance(part, dict):
+            inline = part.get("inline_data") or part.get("inlineData")
+            if inline:
+                mime = inline.get("mime_type") or inline.get("mimeType") or ""
+                if mime.lower().startswith("video/"):
+                    return True
+    return False
+
+
+def _zai_model_for_chat(chat_id: Optional[int], has_media: bool = False) -> str:
+    """Выбирает модель Z.AI для чата. Для видео/изображений используется GLM-4.5V."""
+    if has_media:
+        return ZAI_VISION_MODEL
+    
+    if chat_id is not None:
+        cfg = configs.get(chat_id)
+        if cfg and getattr(cfg, "zai_model", None) in ZAI_TEXT_MODELS:
+            return cfg.zai_model
+    
+    return ZAI_DEFAULT_MODEL
+
+
+def _prepare_zai_messages(
+    stored_history: List[Dict[str, Any]],
+    user_message: Dict[str, Any],
+    is_vision: bool = False,
+) -> List[Dict[str, Any]]:
+    """Подготавливает сообщения для Z.AI API."""
+    messages: List[Dict[str, Any]] = []
+    
+    if BOT_PERSONA_PROMPT:
+        messages.append({"role": "system", "content": BOT_PERSONA_PROMPT})
+    
+    # История (только текст для обычных моделей)
+    for message in stored_history:
+        parts = message.get("parts", [])
+        text = _parts_to_text(parts)
+        if not text:
+            continue
+        role = message.get("role", "user")
+        if role == "model":
+            role = "assistant"
+        elif role not in {"assistant", "system"}:
+            role = "user"
+        messages.append({"role": role, "content": text})
+    
+    # Текущее сообщение пользователя
+    parts = user_message.get("parts", [])
+    
+    if is_vision:
+        # Для GLM-4.5V используем мультимодальный формат
+        content_items: List[Dict[str, Any]] = []
+        
+        for part in parts:
+            if isinstance(part, dict):
+                if "text" in part and part["text"]:
+                    content_items.append({"type": "text", "text": str(part["text"])})
+                elif "inline_data" in part:
+                    inline = part["inline_data"]
+                    mime = inline.get("mime_type") or inline.get("mimeType") or ""
+                    data = inline.get("data")
+                    
+                    if isinstance(data, bytes):
+                        data_b64 = base64.b64encode(data).decode("utf-8")
+                    elif isinstance(data, str):
+                        data_b64 = data
+                    else:
+                        continue
+                    
+                    if mime.lower().startswith("video/"):
+                        # Для видео нужен URL или base64
+                        # Z.AI принимает URL, но мы передаём base64 через data URL
+                        video_url = f"data:{mime};base64,{data_b64}"
+                        content_items.append({
+                            "type": "video_url",
+                            "video_url": {"url": video_url}
+                        })
+                    elif mime.lower().startswith("image/"):
+                        image_url = f"data:{mime};base64,{data_b64}"
+                        content_items.append({
+                            "type": "image_url",
+                            "image_url": {"url": image_url}
+                        })
+            elif isinstance(part, str) and part.strip():
+                content_items.append({"type": "text", "text": part})
+        
+        if content_items:
+            messages.append({"role": "user", "content": content_items})
+    else:
+        # Для текстовых моделей
+        text = _parts_to_text(parts)
+        if text.strip():
+            messages.append({"role": "user", "content": text})
+    
+    return messages
+
+
+def _send_zai_request(
+    chat_id: Optional[int],
+    stored_history: List[Dict[str, Any]],
+    user_message: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Отправляет запрос к Z.AI (ZhipuAI) API."""
+    log.info("Attempting Z.AI request")
+    
+    if not ZAI_API_KEY or not ZAI_TEXT_MODELS:
+        log.warning("Z.AI not configured properly")
+        return None
+    
+    parts = user_message.get("parts", [])
+    has_media = _message_has_inline_data(parts)
+    has_video = _message_has_video(parts)
+    
+    # Выбираем модель
+    if has_media or has_video:
+        model_name = ZAI_VISION_MODEL
+        is_vision = True
+        log.info(f"Using Z.AI vision model for media: {model_name}")
+    else:
+        model_name = _zai_model_for_chat(chat_id, has_media=False)
+        is_vision = False
+        log.info(f"Using Z.AI text model: {model_name}")
+    
+    messages = _prepare_zai_messages(stored_history, user_message, is_vision=is_vision)
+    
+    if not messages or (len(messages) == 1 and messages[0].get("role") == "system"):
+        log.warning("No valid messages for Z.AI request")
+        return None
+    
+    payload: Dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": ZAI_TEMPERATURE,
+        "stream": False,
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {ZAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    try:
+        log.debug(f"Sending Z.AI request to {ZAI_CHAT_URL}")
+        response = requests.post(
+            ZAI_CHAT_URL,
+            json=payload,
+            headers=headers,
+            timeout=ZAI_TIMEOUT,
+        )
+        
+        log.debug(f"Z.AI response status: {response.status_code}")
+        
+        if response.status_code in {429, 503}:
+            log.warning(
+                "Z.AI returned %s for model %s. Retrying other providers...",
+                response.status_code,
+                model_name,
+            )
+            time.sleep(SERVICE_UNAVAILABLE_DELAY)
+            return None
+        
+        response.raise_for_status()
+        
+        data = response.json()
+        choices = data.get("choices") or []
+        
+        if not choices:
+            raise ValueError("Z.AI response contains no choices")
+        
+        message = choices[0].get("message") or {}
+        reply_text = message.get("content") or ""
+        
+        # Убираем теги thinking если есть
+        reply_text = re.sub(r'<think>.*?</think>', '', reply_text, flags=re.DOTALL).strip()
+        
+        if not reply_text:
+            raise ValueError("Z.AI response has empty content")
+        
+        return {
+            "parts": [{"text": reply_text}],
+            "reply_text": reply_text,
+            "fn_call": None,
+            "model_name": f"zai:{model_name}",
+            "provider": "zai",
+        }
+        
+    except requests.RequestException as exc:
+        log.warning("Z.AI request failed (model %s): %s", model_name, exc)
+    except ValueError as exc:
+        log.warning("Z.AI response error (model %s): %s", model_name, exc)
+    except Exception as exc:
+        log.error("Unexpected Z.AI error (model %s): %s", model_name, exc)
+    
+    return None
+
+
 def _summarize_history(chat_id: int, provider_override: Optional[str] = None) -> None:
     chat_history = history.get(chat_id, [])
     if len(chat_history) <= MAX_HISTORY:
@@ -811,6 +1025,8 @@ def _summarize_history(chat_id: int, provider_override: Optional[str] = None) ->
             result = None
             if provider == "gemini":
                 result = _send_gemini_request([], summary_message)
+            elif provider == "zai":
+                result = _send_zai_request(chat_id, [], summary_message)
             elif provider == "openrouter":
                 result = _send_openrouter_request(chat_id, [], summary_message)
             elif provider == "pollinations":
@@ -853,6 +1069,8 @@ def llm_request(
         try:
             if provider == "gemini":
                 result = _send_gemini_request(stored_history, user_message)
+            elif provider == "zai":
+                result = _send_zai_request(chat_id, stored_history, user_message)
             elif provider == "openrouter":
                 result = _send_openrouter_request(chat_id, stored_history, user_message)
             elif provider == "pollinations":

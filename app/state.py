@@ -15,6 +15,7 @@ class ChatConfig:
     llm_provider: str = ""
     pollinations_text_model: str = ""
     openrouter_model: str = ""  # Добавлено для хранения выбранной модели OpenRouter
+    zai_model: str = ""  # Модель Z.AI (ZhipuAI)
 
 
 configs: Dict[int, ChatConfig] = {}
