@@ -81,6 +81,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/warns @user – список предупреждений\n"
         "/clearwarns @user – очистить предупреждения\n"
         "/ban @user причина – забанить 🚫\n"
+        "/unban @user – разбанить ✅\n"
         "/mute @user время – замутить 🔇\n"
         "/unmute @user – размутить 🔊\n"
         "/kick @user – кикнуть 👢\n"
@@ -1670,6 +1671,78 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except TelegramError as exc:
         await update.message.reply_text(f"⚠️ Не удалось забанить пользователя: {exc}")
         log.error(f"Не удалось забанить пользователя {user_id} в чате {chat_id}: {exc}")
+
+
+async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Разбанить пользователя в чате.
+    
+    Usage:
+        /unban @username
+        /unban user_id
+        /unban (в ответ на сообщение)
+    """
+    await ensure_user_profile(update)
+    
+    if not await is_chat_admin(update, context):
+        return
+    
+    chat_id = update.effective_chat.id
+    admin_id = update.effective_user.id
+    
+    # Извлекаем пользователя
+    user_id, user_mention, _ = _extract_user_from_command(update, context)
+    
+    # Если username, пробуем получить user_id
+    if user_id is None and user_mention and user_mention.startswith("@"):
+        user_id = await _resolve_user_id(context, chat_id, user_mention)
+        if user_id is None:
+            await update.message.reply_text(
+                f"⚠️ Не удалось найти пользователя {user_mention}.\n"
+                "Попробуйте указать ID пользователя напрямую."
+            )
+            return
+    
+    if user_id is None:
+        await update.message.reply_text(
+            "⚠️ Укажите пользователя:\n"
+            "<code>/unban @username</code>\n"
+            "<code>/unban user_id</code>\n"
+            "Или ответьте на сообщение пользователя.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Импортируем для логирования
+    from app.moderation.storage import save_mod_action_async
+    from app.moderation.models import ModAction
+    
+    # Разбаниваем пользователя
+    try:
+        await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
+        
+        # Логируем действие
+        mod_action = ModAction.create(
+            chat_id=chat_id,
+            action_type="unban",
+            target_user_id=user_id,
+            admin_id=admin_id,
+            reason="Снятие бана",
+            auto=False
+        )
+        await save_mod_action_async(mod_action)
+        
+        await update.message.reply_text(
+            f"✅ <b>Пользователь разбанен</b>\n"
+            f"👤 {html.escape(user_mention or str(user_id))}\n"
+            f"Теперь он может снова присоединиться к чату.",
+            parse_mode=ParseMode.HTML
+        )
+        
+        log.info(f"Пользователь {user_id} разбанен в чате {chat_id} админом {admin_id}")
+        
+    except TelegramError as exc:
+        await update.message.reply_text(f"⚠️ Не удалось разбанить пользователя: {exc}")
+        log.error(f"Не удалось разбанить пользователя {user_id} в чате {chat_id}: {exc}")
 
 
 def _parse_duration(duration_str: str) -> Optional[int]:

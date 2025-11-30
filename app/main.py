@@ -73,6 +73,7 @@ def build_application(token: str, bot_username: str):
         "warns": handlers.warns_cmd,
         "clearwarns": handlers.clearwarns_cmd,
         "ban": handlers.ban_cmd,
+        "unban": handlers.unban_cmd,
         "mute": handlers.mute_cmd,
         "unmute": handlers.unmute_cmd,
         "kick": handlers.kick_cmd,
@@ -99,7 +100,8 @@ def build_application(token: str, bot_username: str):
     app.add_handler(CallbackQueryHandler(handlers.handle_captcha_callback, pattern=r"^captcha:"))
     
     # Moderation settings callback handler (Requirement 7.1)
-    app.add_handler(CallbackQueryHandler(handlers.handle_settings_callback, pattern=r"^modsettings:"))
+    # Паттерн ловит все callback для настроек: modsettings:, modcat:, modtoggle:, modval:, modback
+    app.add_handler(CallbackQueryHandler(handlers.handle_settings_callback, pattern=r"^(modsettings:|modcat:|modtoggle:|modval:|modback)"))
     
     # Spam check handler for group messages (runs before main handlers)
     # Используем group=-1 чтобы обработчик запускался раньше основных
